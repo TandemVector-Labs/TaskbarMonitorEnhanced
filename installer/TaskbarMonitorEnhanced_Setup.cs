@@ -535,6 +535,31 @@ internal static partial class SetupProgram
         }
     }
 
+    // R091: system Unicode IShellLinkW; never stage or execute a user-writable
+    // PowerShell script just to create a shortcut. No PATH command lookup,
+    // ExecutionPolicy Bypass, COM WScript.Shell ANSI filename fallback or UAC.
+    [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface ShortcutShellLinkW {
+      void GetPath([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder path,int n,IntPtr findData,uint flags);
+      void GetIDList(out IntPtr ppidl);
+      void SetIDList(IntPtr pidl);
+      void GetDescription([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder description,int len);
+      void SetDescription([MarshalAs(UnmanagedType.LPWStr)]string desc);
+      void GetWorkingDirectory([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder dir,int len);
+      void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)]string dir);
+      void GetArguments([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder args,int len);
+      void SetArguments([MarshalAs(UnmanagedType.LPWStr)]string args);
+      void GetHotkey(out short hotkey);
+      void SetHotkey(short hotkey);
+      void GetShowCmd(out int style);
+      void SetShowCmd(int style);
+      void GetIconLocation([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder path,int len,out int index);
+      void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)]string path,int index);
+      void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)]string path,uint reserved);
+      void Resolve(IntPtr hwnd,uint flags);
+      void SetPath([MarshalAs(UnmanagedType.LPWStr)]string path);
+    }
+
     static void Shortcut(string path,string target)
     {
         Shortcut(path,target,"","Live system monitor integrated into the Windows taskbar");
@@ -542,26 +567,35 @@ internal static partial class SetupProgram
 
     static void Shortcut(string path,string target,string arguments,string description)
     {
-        string temp=Path.Combine(Path.GetTempPath(),"tbme_shortcut_"+Guid.NewGuid().ToString("N")+".ps1");
-        string text=
-          "$ErrorActionPreference='Stop'\r\n"+
-          "$w=New-Object -ComObject WScript.Shell\r\n"+
-          "$s=$w.CreateShortcut('"+path.Replace("'","''")+"')\r\n"+
-          "$s.TargetPath='"+target.Replace("'","''")+"'\r\n"+
-          "$s.Arguments='"+arguments.Replace("'","''")+"'\r\n"+
-          "$s.WorkingDirectory='"+AppRoot.Replace("'","''")+"'\r\n"+
-          "$s.IconLocation='"+AppExe.Replace("'","''")+",0'\r\n"+
-          "$s.Description='"+description.Replace("'","''")+"'\r\n"+
-          "$s.WindowStyle=1\r\n$s.Save()\r\n";
-        File.WriteAllText(temp,text,Encoding.UTF8);
-        try{
-            ProcessStartInfo psi=new ProcessStartInfo("powershell.exe","-NoProfile -ExecutionPolicy Bypass -File \""+temp+"\"");
-            psi.UseShellExecute=false;psi.CreateNoWindow=true;
-            Process p=Process.Start(psi);
-            if(p==null || !p.WaitForExit(15000) || p.ExitCode!=0)
-                throw new InvalidOperationException("Shortcut creation failed.");
+        // All production callers supply absolute Desktop/StartMenu paths and
+        // absolute already-built product binaries. Reject unexpected callers.
+        if(String.IsNullOrWhiteSpace(path) || !Path.IsPathRooted(path) ||
+           !String.Equals(Path.GetExtension(path),".lnk",StringComparison.OrdinalIgnoreCase) ||
+           String.IsNullOrWhiteSpace(target) || !Path.IsPathRooted(target))
+            throw new InvalidDataException("Shortcut path or target is not absolute and safe.");
+        object com=null;
+        try
+        {
+            // System-registered Windows ShellLink COM CLSID; use the Unicode
+            // IUnknown vtable, not WScript.Shell's legacy path handling.
+            Type clsid=Type.GetTypeFromCLSID(
+                new Guid("00021401-0000-0000-C000-000000000046"),true);
+            com=Activator.CreateInstance(clsid);
+            ShortcutShellLinkW link=(ShortcutShellLinkW)com;
+            link.SetPath(target);
+            link.SetArguments(arguments??"");
+            link.SetWorkingDirectory(AppRoot);
+            link.SetDescription(description??"");
+            link.SetIconLocation(AppExe,0);
+            link.SetShowCmd(1);
+            ((System.Runtime.InteropServices.ComTypes.IPersistFile)com).Save(path,true);
+            if(!File.Exists(path))throw new IOException("Shortcut creation failed.");
         }
-        finally{try{File.Delete(temp);}catch{}}
+        finally
+        {
+            if(com!=null && Marshal.IsComObject(com))
+                Marshal.FinalReleaseComObject(com);
+        }
     }
 
     static string Sha256File(string path)
