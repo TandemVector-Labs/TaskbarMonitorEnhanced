@@ -40,8 +40,22 @@ if(-not (Get-Command New-LocalUser -ErrorAction SilentlyContinue) -or
 }
 $asm=[Reflection.Assembly]::LoadFile($pe)
 $t=$asm.GetType('SetupProgram+SensorStatusReceiver',$true)
-$receiver=[Activator]::CreateInstance($t,$true)
-$child=$null
+$pinvoke=@"
+using System;
+using System.Runtime.InteropServices;
+public static class TbmeR090TokenNative
+{
+    [DllImport("advapi32.dll",EntryPoint="LogonUserW",
+       CharSet=CharSet.Unicode,SetLastError=true)]
+    public static extern bool LogonUser(string username,string domain,
+       string password,int logonType,int provider,out IntPtr token);
+    [DllImport("kernel32.dll",SetLastError=true)]
+    public static extern bool CloseHandle(IntPtr token);
+}
+"@
+Add-Type -TypeDefinition $pinvoke -ErrorAction Stop$receiver=[Activator]::CreateInstance($t,$true)
+$ctx=$null
+$token=[IntPtr]::Zero
 $created=$false
 $name='tbme90_'+([guid]::NewGuid().ToString('N').Substring(0,8))
 try{
@@ -62,7 +76,6 @@ try{
     [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($random)
     $password=('X7!a'+[Convert]::ToBase64String($random).Replace('/','z').Replace('+','y'))
     $secure=ConvertTo-SecureString $password -AsPlainText -Force
-    $password=$null
     $user=New-LocalUser -Name $name -Password $secure -Description 'Ephemeral GitHub Actions R090 SID boundary test' -AccountExpires ((Get-Date).AddHours(2)) -ErrorAction Stop
     $created=$true
     $sid=$user.SID.Value
@@ -72,45 +85,55 @@ try{
     'R090_EPHEMERAL_DIFFERENT_LOCAL_ACCOUNT_CREATED=TRUE'
     $pipeName=[string]$t.GetField('Name',[Reflection.BindingFlags]'Public,Instance').GetValue($receiver)
     if($pipeName -notmatch '^tbme_sensor_[a-f0-9]{32}$'){throw 'R090_REAL_RANDOM_PIPE_NAME_INVALID'}
-    # CreateProcessWithLogonW caps its command line at 1024 chars.
-    # The original test-only -EncodedCommand was 2295 and failed with Win32 87.
-    # This is a NON-ELEVATED test-only inline command, NOT the product Helper.
-    if($current -notmatch '^S-\d+(?:-\d+)+$' -or
-       $sid -notmatch '^S-\d+(?:-\d+)+$'){
-        throw 'R090_LOCAL_SID_SYNTAX_UNEXPECTED'
+    # R092: a real Windows interactive logon token (a distinct temporary SID)
+    # is impersonated synchronously for the EXACT named-pipe CreateFile access
+    # check. No second process / user profile / UAC / driver is launched.
+    # .NET Framework 4.8 WindowsIdentity.Impersonate requires mandatory Undo.
+    $token=[IntPtr]::Zero
+    if(-not [TbmeR090TokenNative]::LogonUser($name,$env:COMPUTERNAME,$password,2,0,[ref]$token)){
+        $errorCode=[Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        throw ('R090_LOGONUSER_WIN32_ERROR_'+$errorCode)
     }
-    $clientSource='$a=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;if($a-cne''__ALT__''-or$a-ceq''__SELF__''){exit 43};$c=[IO.Pipes.NamedPipeClientStream]::new(''.'',''__PIPE__'',[IO.Pipes.PipeDirection]::InOut);try{$c.Connect(3500);exit 41}catch [UnauthorizedAccessException]{exit 42}catch [IO.IOException]{exit 42}catch [TimeoutException]{exit 42}catch{exit 44}finally{$c.Dispose()}'
-    $clientSource=$clientSource.Replace('__ALT__',$sid).Replace('__SELF__',$current).Replace('__PIPE__',$pipeName).Trim()
-    if($clientSource.Contains('"') -or $clientSource.Contains([char]0)){
-        throw 'R090_TEST_ONLY_COMMAND_CONTAINS_QUOTE_OR_NUL'
+    $password=$null
+    $ctx=[Security.Principal.WindowsIdentity]::Impersonate($token)
+    $denied=$false;$connected=$false
+    try{
+        $effective=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        if($effective -cne $sid -or $effective -ceq $current){
+            throw 'R090_IMPERSONATED_THREAD_OS_SID_NOT_SECOND_ACCOUNT'
+        }
+        $client=[IO.Pipes.NamedPipeClientStream]::new(
+            '.',$pipeName,[IO.Pipes.PipeDirection]::InOut)
+        try{
+            $client.Connect(2500)
+            $connected=$true
+        }catch [UnauthorizedAccessException]{
+            $denied=$true
+        }catch [IO.IOException]{
+            $denied=$true
+        }catch [TimeoutException]{
+            $denied=$true
+        }finally{
+            $client.Dispose()
+        }
+    }finally{
+        $ctx.Undo()
+        $ctx.Dispose()
+        $ctx=$null
+        [void][TbmeR090TokenNative]::CloseHandle($token)
+        $token=[IntPtr]::Zero
     }
-    $argsSafe='-NoProfile -NonInteractive -Command "& { '+$clientSource+' }"'
-    if($argsSafe.Length -gt 950){
-        throw 'R090_CREATEPROCESSWITHLOGONW_MAX_1024_GUARD'
-    }
-    'R090_OTHER_USER_PROCESS_ARGUMENT_LENGTH_WITHIN_1024=PASS'
-    $ps=Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
-    $cred=[Management.Automation.PSCredential]::new(($env:COMPUTERNAME+'\'+$name),$secure)
-    $child=Start-Process -FilePath $ps -Credential $cred -ArgumentList $argsSafe -WorkingDirectory $env:SystemRoot -PassThru -WindowStyle Hidden -ErrorAction Stop
-    if(-not $child){throw 'R090_ALTERNATE_PROCESS_UNAVAILABLE'}
-    if(-not $child.WaitForExit(12000)){
-        try{$child.Kill()}catch{}
-        throw 'R090_OTHER_USER_PROCESS_TIMEOUT'
-    }
-    if($child.ExitCode -eq 43){throw 'R090_OTHER_USER_PROCESS_SID_ASSERTION_FAILED'}
-    if($child.ExitCode -eq 41){throw 'R090_WRONG_SID_CONNECTED_TO_REQUESTER_PIPE'}
-    if($child.ExitCode -ne 42){throw ('R090_OTHER_USER_PROCESS_UNEXPECTED_EXIT_'+$child.ExitCode)}
+    if($connected){throw 'R090_IMPERSONATED_OTHER_SID_CONNECTED_TO_PRIVATE_PIPE'}
+    if(-not $denied){throw 'R090_ALTERNATE_OS_TOKEN_DENIAL_NOT_OBSERVED'}
     if([bool]$t.GetProperty('HasResult',[Reflection.BindingFlags]'Public,Instance').GetValue($receiver,$null)){
-        throw 'R090_UNAUTHORIZED_FRAME_WAS_ADMITTED'
+        throw 'R090_UNAUTHORIZED_FRAME_ADMITTED'
     }
-    'R090_OS_DIFFERENT_SID_CLIENT_DENIED_PIPE=PASS'
-    'R090_UAC_CONSENT_AND_ELEVATED_CHILD_NOT_TESTED=TRUE'
+    'R090_WINDOWS_DISTINCT_SID_TOKEN_DENIED_NAMED_PIPE=PASS'
+    'R090_REAL_UAC_AND_SEPARATE_PROCESS_UNTESTED=TRUE'
     'R090_BOTH_OWNER_DEVICES_UNTOUCHED=TRUE'
 }finally{
-    if($child){
-        if(-not $child.HasExited){try{$child.Kill();$child.WaitForExit(3000)|Out-Null}catch{}}
-        $child.Dispose()
-    }
+    if($ctx){$ctx.Undo();$ctx.Dispose()}
+    if($token -ne [IntPtr]::Zero){[void][TbmeR090TokenNative]::CloseHandle($token)}
     $receiver.Dispose()
     if($created){
         Remove-LocalUser -Name $name -ErrorAction Stop
@@ -120,5 +143,6 @@ try{
         'R090_EPHEMERAL_OTHER_ACCOUNT_REMOVED=PASS'
     }
     $secure=$null
+    $password=$null
     $random=$null
 }
