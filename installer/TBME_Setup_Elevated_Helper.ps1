@@ -103,7 +103,6 @@ function Assert-SensorPrivilegedBoundary(
        (Join-Path $payload 'TBME_Setup_Elevated_Helper.ps1'),
        (Join-Path $payload 'TaskbarMonitorSensorBroker.exe'),
        (Join-Path $payload 'TaskbarMonitorSensorSupervisor.exe'),
-       (Join-Path $payload 'PawnIO_setup.exe'),
        (Join-Path $brokerRoot 'TaskbarMonitorSensorBroker.exe'),
        (Join-Path $brokerRoot 'TaskbarMonitorSensorSupervisor.exe')
     )
@@ -130,9 +129,9 @@ $RollbackPerformed=$false
 $RollbackSucceeded=$false
 $PreviousSensorLayerPresent=$false
 $ActiveArchitecture='R21_PROCESS_ISOLATED'
-$RollbackRoot=Join-Path $PayloadDir '_sensor_rollback'
-$RollbackBrokerRoot=Join-Path $RollbackRoot 'SensorBroker'
-$RollbackTaskXml=Join-Path $RollbackRoot 'task.xml'
+$RollbackFiles=@()
+$RollbackTaskXmlText=$null
+$RollbackCaptured=$false
 
 function Write-Log([string]$Message){
     $line=(Get-Date).ToString('o')+' '+$Message
@@ -183,25 +182,85 @@ function Get-PawnIOVersion {
     return ''
 }
 
+# R296: no privileged rollback snapshot is staged to user-writable Temp.
+function Get-SensorRollbackFiles([string]$Folder){
+    Assert-SensorBoundaryNoReparse $Folder
+    $root=[IO.Path]::GetFullPath($Folder).TrimEnd('\')
+    $prefix=$root+'\'
+    $items=@(Get-ChildItem -LiteralPath $root -Force -Recurse -ErrorAction Stop)
+    foreach($item in $items){Assert-SensorBoundaryNoReparse $item.FullName}
+    $files=@($items|Where-Object {-not $_.PSIsContainer})
+    if($files.Count -gt 128){throw 'ROLLBACK_FILE_COUNT'}
+    $saved=[Collections.Generic.List[object]]::new()
+    [long]$total=0
+    foreach($file in $files){
+        $path=[IO.Path]::GetFullPath($file.FullName)
+        if(-not $path.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'ROLLBACK_PATH_ESCAPE'}
+        Assert-SensorBoundaryNoReparse $path
+        $rel=$path.Substring($prefix.Length)
+        foreach($part in $rel.Split('\')){
+            if($part -ceq '.' -or $part -ceq '..' -or $part -cnotmatch '^[A-Za-z0-9_.-]+$'){
+                throw 'ROLLBACK_BAD_NAME'
+            }
+        }
+        $fs=[IO.FileStream]::new($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
+        try{
+            if($fs.Length -gt 16777216){throw 'ROLLBACK_FILE_TOO_LARGE'}
+            $total+=$fs.Length
+            if($total -gt 67108864){throw 'ROLLBACK_TOTAL_TOO_LARGE'}
+            $bytes=[byte[]]::new([int]$fs.Length)
+            $n=0
+            while($n -lt $bytes.Length){
+                $k=$fs.Read($bytes,$n,$bytes.Length-$n)
+                if($k -lt 1){throw 'ROLLBACK_SHORT_READ'}
+                $n+=$k
+            }
+            $saved.Add([pscustomobject]@{Rel=$rel;Data=$bytes})
+        }finally{$fs.Dispose()}
+    }
+    return ,$saved.ToArray()
+}
+function Restore-SensorRollbackFiles([string]$Folder,[object[]]$Saved){
+    Assert-SensorBoundaryNoReparse $Folder
+    New-Item -ItemType Directory -Force -Path $Folder|Out-Null
+    foreach($entry in $Saved){
+        foreach($part in ([string]$entry.Rel).Split('\')){
+            if($part -ceq '.' -or $part -ceq '..' -or $part -cnotmatch '^[A-Za-z0-9_.-]+$'){
+                throw 'ROLLBACK_RESTORE_BAD_NAME'
+            }
+        }
+        $path=Join-Path $Folder $entry.Rel
+        Assert-SensorBoundaryNoReparse $path
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path)|Out-Null
+        Assert-SensorBoundaryNoReparse $path
+        [IO.File]::WriteAllBytes($path,[byte[]]$entry.Data)
+    }
+}
+function Clear-SensorRollbackBuffer {
+    $script:RollbackFiles=@()
+    $script:RollbackTaskXmlText=$null
+    $script:RollbackCaptured=$false
+}
+
 function Capture-PreviousSensorLayer {
     try{
-        Remove-Item -LiteralPath $RollbackRoot -Recurse -Force -ErrorAction SilentlyContinue
-        New-Item -ItemType Directory -Force -Path $RollbackRoot|Out-Null
-
+        Clear-SensorRollbackBuffer
         if(Test-Path -LiteralPath $BrokerRoot){
+            $script:RollbackFiles=Get-SensorRollbackFiles $BrokerRoot
             $script:PreviousSensorLayerPresent=$true
-            Copy-Item -LiteralPath $BrokerRoot -Destination $RollbackBrokerRoot -Recurse -Force
         }
-
         Import-Module ScheduledTasks
-        $oldTask=Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-        if($oldTask){
+        $task=Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+        if($task){
+            $script:RollbackTaskXmlText=[string](Export-ScheduledTask -TaskName $TaskName)
+            if($RollbackTaskXmlText.Length -gt 262144){throw 'ROLLBACK_XML_TOO_LARGE'}
             $script:PreviousSensorLayerPresent=$true
-            Export-ScheduledTask -TaskName $TaskName | Set-Content -LiteralPath $RollbackTaskXml -Encoding Unicode
         }
+        $script:RollbackCaptured=$true
         Write-Log ("ROLLBACK_CAPTURE_PASS previous="+$PreviousSensorLayerPresent)
         return $true
     }catch{
+        Clear-SensorRollbackBuffer
         Write-Log ('ROLLBACK_CAPTURE_FAIL '+$_.Exception.ToString())
         return $false
     }
@@ -212,6 +271,7 @@ function Restore-PreviousSensorLayer([string]$Reason){
     $script:RollbackSucceeded=$false
     try{
         Write-Log ("ROLLBACK_BEGIN reason="+$Reason+" previous="+$PreviousSensorLayerPresent)
+        if(-not $RollbackCaptured){throw 'ROLLBACK_NOT_CAPTURED'}
         Get-Process TaskbarMonitorSensorSupervisor,TaskbarMonitorSensorBroker -ErrorAction SilentlyContinue |
             Stop-Process -Force -ErrorAction SilentlyContinue
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
@@ -219,14 +279,11 @@ function Restore-PreviousSensorLayer([string]$Reason){
         Remove-Item -LiteralPath $BrokerRoot -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $LiveJson,$GpuJson,$StorageJson,$SupervisorState -Force -ErrorAction SilentlyContinue
 
-        if(Test-Path -LiteralPath $RollbackBrokerRoot){
-            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $BrokerRoot)|Out-Null
-            Copy-Item -LiteralPath $RollbackBrokerRoot -Destination $BrokerRoot -Recurse -Force
+        if(@($RollbackFiles).Count -gt 0){
+            Restore-SensorRollbackFiles $BrokerRoot $RollbackFiles
         }
-
-        if(Test-Path -LiteralPath $RollbackTaskXml){
-            $xml=Get-Content -LiteralPath $RollbackTaskXml -Raw
-            Register-ScheduledTask -TaskName $TaskName -Xml $xml -Force|Out-Null
+        if(-not [string]::IsNullOrEmpty($RollbackTaskXmlText)){
+            Register-ScheduledTask -TaskName $TaskName -Xml $RollbackTaskXmlText -Force|Out-Null
             Start-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
         }
 
@@ -384,7 +441,6 @@ function Get-VerifiedSensorBackendEntries([string]$ZipFile,[string]$ExpectedZipS
 
 $BrokerPayload=Join-Path $PayloadDir 'TaskbarMonitorSensorBroker.exe'
 $SupervisorPayload=Join-Path $PayloadDir 'TaskbarMonitorSensorSupervisor.exe'
-$PawnPayload=Join-Path $PayloadDir 'PawnIO_setup.exe'
 $BackendRoot=Join-Path $AppRoot 'SensorBackend\LibreHardwareMonitor-0.9.6'
 $LiveJson=Join-Path $AppRoot 'cpu_temp_broker.json'
 $GpuJson=Join-Path $AppRoot 'gpu_temp_broker.json'
@@ -406,17 +462,19 @@ if(-not$requiredOk){
     exit 0
 }
 
-# Public OSS Setup never bundles the separately licensed official PawnIO installer.
-# Reuse an already installed compatible PawnIO; otherwise degrade before any service
-# mutation, UAC driver installation, network request or host rollback snapshot.
+# R297: NEVER execute a user-writable PawnIO installer from Temp under UAC.
+# A forged PawnIO_setup.exe can be created after payload extraction, even if
+# the official open-source PE carries no proprietary PawnIO resource.
+# Only an already installed compatible PawnIO is reused; otherwise fail closed
+# and request a separate, explicit upstream installer with user consent.
 $existingPawn=Get-PawnIOVersion
 $pawnAlreadyCompatible=$false
 if($existingPawn){
     try{if([version]$existingPawn -ge [version]'2.2.0'){$pawnAlreadyCompatible=$true}}catch{}
 }
-if(-not $pawnAlreadyCompatible -and !(Test-Path -LiteralPath $PawnPayload -PathType Leaf)){
+if(-not $pawnAlreadyCompatible){
     $ActiveArchitecture='PAWNIO_EXTERNAL_INSTALL_REQUIRED'
-    Write-Log 'PAWNIO_UPSTREAM_EXTERNAL_INSTALL_REQUIRED no bundled proprietary binary and no silent driver download'
+    Write-Log 'PAWNIO_UPSTREAM_EXTERNAL_INSTALL_REQUIRED never executing mutable Temp PawnIO binary under UAC'
     Write-Result 'DEGRADED' ('Optional protected hardware sensors require the official PawnIO 2.2.0 driver, installed separately with user consent from https://github.com/namazso/PawnIO.Setup/releases/tag/2.2.0 . The main application works without it and unavailable temperatures show N/A. No driver or protected sensor service was modified.') 'EXTERNAL_INSTALL_REQUIRED' $null $false $false $false
     exit 0
 }
@@ -440,44 +498,7 @@ if(-not(Capture-PreviousSensorLayer)){
 $pawnStatus='ALREADY_PRESENT'
 $pawnExit=$null
 $rebootRequired=$false
-$installedPawn=Get-PawnIOVersion
-$needPawn=$true
-if($installedPawn){
-    try{
-        if([version]$installedPawn -ge [version]'2.2.0'){$needPawn=$false}
-    }catch{}
-}
-
-if($needPawn){
-    $pawnStatus='STARTING'
-    Write-Log 'PAWNIO_INSTALL_START timeoutSec=60'
-    try{
-        $pawnProcess=Start-Process -FilePath $PawnPayload -ArgumentList '-install -silent' -PassThru
-        if(-not $pawnProcess.WaitForExit(60000)){
-            Write-Log "PAWNIO_TIMEOUT pid=$($pawnProcess.Id)"
-            try{Stop-Process -Id $pawnProcess.Id -Force -ErrorAction SilentlyContinue}catch{}
-            $pawnStatus='TIMEOUT'
-        }else{
-            $pawnExit=[int]$pawnProcess.ExitCode
-            if($pawnExit -eq 0){
-                $pawnStatus='INSTALLED'
-                Write-Log 'PAWNIO_INSTALL_PASS exit=0'
-            }elseif($pawnExit -eq 3010){
-                $pawnStatus='REBOOT_REQUIRED'
-                $rebootRequired=$true
-                Write-Log 'PAWNIO_INSTALL_REBOOT_REQUIRED exit=3010'
-            }else{
-                $pawnStatus='FAILED'
-                Write-Log "PAWNIO_INSTALL_FAILED exit=$pawnExit"
-            }
-        }
-    }catch{
-        $pawnStatus='EXCEPTION'
-        Write-Log ('PAWNIO_INSTALL_EXCEPTION '+$_.Exception.ToString())
-    }
-}else{
-    Write-Log "PAWNIO_ALREADY_PRESENT version=$installedPawn"
-}
+Write-Log "PAWNIO_ALREADY_PRESENT version=$existingPawn"
 
 $taskInstalled=$false
 try{
@@ -596,6 +617,7 @@ if($taskInstalled -and -not$SupervisorHealthy -and -not$rebootRequired){
 
 if($RollbackPerformed){
     if($RollbackSucceeded){
+        Clear-SensorRollbackBuffer
         Write-Log 'R21_INSTALL_DEGRADED_ROLLED_BACK'
         Write-Result 'DEGRADED_ROLLED_BACK' 'R21 protected sensor validation did not pass, so the previous protected sensor layer was restored automatically. The main application remains usable; use Repair protected sensors to retry R21 later.' $pawnStatus $pawnExit $false $false $false
     }else{
@@ -605,6 +627,8 @@ if($RollbackPerformed){
     exit 0
 }
 
+# Retire the in-memory snapshot after a successful terminal path.
+Clear-SensorRollbackBuffer
 if($SupervisorHealthy -and $healthy){
     Write-Log "R21_SENSOR_READY cpu=$currentC"
     Write-Result 'READY' 'R21 protected sensor supervisor is healthy across CPU, GPU and storage lanes; CPU temperature data is active.' $pawnStatus $pawnExit $false $taskInstalled $true

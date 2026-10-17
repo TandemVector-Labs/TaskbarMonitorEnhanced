@@ -99,7 +99,7 @@ try{
         throw 'R293_ELEVATION_COMMAND_USES_UNTRUSTED_FILE_PATH'
     }
     $encoded=$cmd.Substring($prefix.Length)
-    if($encoded.Length -lt 1000 -or $encoded.Length -gt 31500){
+    if($encoded.Length -lt 1000 -or $encoded.Length -gt 32000){
         throw 'R293_ENCODED_COMMAND_LENGTH_OUT_OF_BOUNDS'
     }
     $script=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded))

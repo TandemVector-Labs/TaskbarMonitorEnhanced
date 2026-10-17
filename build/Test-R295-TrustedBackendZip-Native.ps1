@@ -81,7 +81,7 @@ try{
  $command=[string]$m.Invoke($null,$args4)
  $prefix='-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand '
  if(!$command.StartsWith($prefix,[StringComparison]::Ordinal) -or
-    $command.Length -gt 31580){throw 'R295_NATIVE_COMMAND_SIZE_OR_ENTRY_INVALID'}
+    $command.Length -gt 32080){throw 'R295_NATIVE_COMMAND_SIZE_OR_ENTRY_INVALID'}
  $bootstrap=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($command.Substring($prefix.Length)))
  $match=[regex]::Match($bootstrap,"-ExpectedBackendZipSHA256 '([A-F0-9]{64})'")
  if(!$match.Success){throw 'R295_EMBEDDED_ZIP_SHA_NOT_TRANSPORTED'}

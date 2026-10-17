@@ -51,7 +51,7 @@ try{
     $command=[string]$m.Invoke($null,$args4)
     $prefix='-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand '
     if(!$command.StartsWith($prefix,[StringComparison]::Ordinal) -or
-       $command.Length -gt 31580){throw 'R294_UNEXPECTED_LAUNCH_COMMAND'}
+       $command.Length -gt 32080){throw 'R294_UNEXPECTED_LAUNCH_COMMAND'}
     $encoded=$command.Substring($prefix.Length)
     $bootstrap=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded))
     $match=[regex]::Match($bootstrap,"-ExpectedBrokerSHA256 '([A-F0-9]{64})' -ExpectedSupervisorSHA256 '([A-F0-9]{64})'")

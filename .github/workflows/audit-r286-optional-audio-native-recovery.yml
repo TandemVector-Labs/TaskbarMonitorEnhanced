@@ -206,7 +206,7 @@ jobs:
              $r.RealNonElevatedEncodedPowerShellCalled -ne $true -or
              $r.InvalidAppRootRejectedBeforeWrite -ne $true -or
              $r.InstalledMainUnchanged -ne $true -or
-             $r.BoundedEncodedCommandLength -lt 1000 -or $r.BoundedEncodedCommandLength -gt 31500 -or
+             $r.BoundedEncodedCommandLength -lt 1000 -or $r.BoundedEncodedCommandLength -gt 32000 -or
              @($r.Checks).Count -lt 9 -or
              @($r.Checks|Where-Object {$_ -ceq 'QUOTED_HOSTILE_USER_INPUT_ENCODED_AS_DATA'}).Count -ne 1 -or
              @($r.Checks|Where-Object {$_ -ceq 'R065_TRUSTED_SYSTEM_POWERSHELL_NO_PATH_BAIT'}).Count -ne 1 -or
@@ -258,6 +258,49 @@ jobs:
              $r.VerifiedBytesOnlyCopiedToSandbox -ne $true -or
              $r.InstalledMainUnchanged -ne $true -or @($r.Checks).Count -lt 11){throw 'R295_TYPED_ZIP_RECEIPT_INVALID'}
           'R295_EXACT_ZIP_TRAVERSAL_TAMPER_DUPLICATE_LINK_REFUSAL_PASS'
+      - name: R296 prove old sensor rollback stays in private process memory
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=(Resolve-Path build/Test-R296-RollbackMemory-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($p,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R296_NATIVE_PS51_PARSER_INVALID'}
+          ./build/Test-R296-RollbackMemory-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $p=Join-Path $env:RUNNER_TEMP ('R296_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R296_MEMORY_ROLLBACK_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $p)){throw 'R296_MEMORY_ROLLBACK_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $p -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R296' -or
+             $r.Status -cne 'PASS_MEMORY_ONLY_ROLLBACK_NO_USER_TEMP_TRUST' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OriginalOwnerComputerTouched -ne $false -or $r.UACOrProtectedServiceCalled -ne $false -or
+             $r.PrivateSnapshotFiles -ne 3 -or $r.ForgedUserTempIgnored -ne $true -or
+             $r.TwoJunctionDirectionsRejected -ne $true -or
+             $r.CorruptedOriginalRestoredFromMemory -ne $true -or
+             $r.NoRollbackDiskFiles -ne $true -or $r.InstalledMainUnchanged -ne $true -or
+             @($r.Checks).Count -lt 12){throw 'R296_TYPED_GUEST_MEMORY_RECEIPT_INVALID'}
+          'R296_ROLLBACK_IN_MEMORY_TAMPER_AND_REPARSE=PASS'
+      - name: R297 refuse forged PawnIO automatic elevation from writable Temp
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=(Resolve-Path build/Test-R297-NoPawnAutoElevation-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($p,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R297_NATIVE_PS51_PARSER_INVALID'}
+          ./build/Test-R297-NoPawnAutoElevation-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $p=Join-Path $env:RUNNER_TEMP ('R297_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R297_PAWN_REFUSAL_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $p)){throw 'R297_TYPED_GUEST_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $p -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R297' -or
+             $r.Status -cne 'PASS_NO_UNTRUSTED_PAWNIO_AUTORUN' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OriginalOwnerComputerTouched -ne $false -or $r.UACOrDriverServiceMutation -ne $false -or
+             $r.FakeTempPawnInstallerIgnored -ne $true -or
+             $r.MissingDriverRequiresOfficialExternalConsent -ne $true -or
+             $r.ExistingCompatiblePawnIORetained -ne $true -or $r.MainUnchanged -ne $true -or
+             @($r.Checks).Count -lt 10){throw 'R297_TYPED_PAWNIO_REFUSAL_RECEIPT_INVALID'}
+          'R297_FORGED_TEMP_PAWNIO_ELEVATION_REFUSED=PASS'
       - name: Preserve bounded guest evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -273,3 +316,5 @@ jobs:
             ${{ runner.temp }}/R293_${{ matrix.host }}_${{ github.run_id }}/R293_INMEMORY_RECEIPT.json
             ${{ runner.temp }}/R294_${{ matrix.host }}_${{ github.run_id }}/R294_PROVENANCE_RECEIPT.json
             ${{ runner.temp }}/R295_${{ matrix.host }}_${{ github.run_id }}/R295_ZIP_PROVENANCE_RECEIPT.json
+            ${{ runner.temp }}/R296_${{ matrix.host }}_${{ github.run_id }}/R296_MEMORY_ROLLBACK_RECEIPT.json
+            ${{ runner.temp }}/R297_${{ matrix.host }}_${{ github.run_id }}/R297_PAWN_REFUSAL_RECEIPT.json
