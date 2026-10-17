@@ -41,22 +41,39 @@ try{
     }
     $assembly=[Reflection.Assembly]::LoadFile([IO.Path]::GetFullPath($setup))
     $type=$assembly.GetType('SetupProgram',$true)
-    $m=$type.GetMethod('BuildElevatedHelperCommand',[Reflection.BindingFlags]'NonPublic,Static')
+    $m=$type.GetMethod('BuildElevatedHelperCommandWithPipe',[Reflection.BindingFlags]'NonPublic,Static')
     if(!$m){throw 'R294_EXPECTED_COMMAND_BUILDER_MISSING'}
-    $args4=[object[]]::new(4)
+    $args4=[object[]]::new(6)
     $args4[0]=[string]'Install'
     $args4[1]=[string](Join-Path ([IO.Path]::GetTempPath()) ('tbme_setup_'+('a'*32)))
     $args4[2]=[string]$app
     $args4[3]=[string]([Security.Principal.WindowsIdentity]::GetCurrent().Name)
+    $args4[4]=[string]('tbme_sensor_'+('a'*32))
+    $args4[5]=[string]('b'*32)
     $command=[string]$m.Invoke($null,$args4)
     $prefix='-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand '
-    if(!$command.StartsWith($prefix,[StringComparison]::Ordinal) -or
-       $command.Length -gt 32080){throw 'R294_UNEXPECTED_LAUNCH_COMMAND'}
-    $encoded=$command.Substring($prefix.Length)
-    $bootstrap=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded))
+    $inline='-NoProfile -NonInteractive -WindowStyle Hidden -Command '
+    $isEncoded=$command.StartsWith($prefix,[StringComparison]::Ordinal)
+    $isInline=$command.StartsWith($inline,[StringComparison]::Ordinal)
+    if((!$isEncoded -and !$isInline) -or
+       ($isEncoded -and $command.Length -gt 32080) -or
+       ($isInline -and $command.Length -gt 30000) -or
+       $command.Contains(' -File ') -or
+       $command.Contains('ExecutionPolicy Bypass') -or
+       $command.Contains([string]$args4[1]) -or
+       $command.Contains([string]$args4[2])){
+        throw 'R294_UNSAFE_COMMAND_SOURCE_OR_SIZE'
+    }
+    $bootstrap=if($isEncoded){
+     [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($command.Substring($prefix.Length)))
+    }else{$command.Substring($inline.Length)}
+    if(-not $bootstrap.Contains('[ScriptBlock]::Create($code)') -or
+       -not $bootstrap.Contains('-StatusPipe $q -StatusNonce $n')){
+        throw 'R294_UNSAFE_COMMAND_SOURCE_OR_SIZE2'
+    }
     $match=[regex]::Match($bootstrap,"-ExpectedBrokerSHA256 '([A-F0-9]{64})' -ExpectedSupervisorSHA256 '([A-F0-9]{64})'")
     if(!$match.Success){throw 'R294_TRUSTED_EMBEDDED_HASHES_NOT_TRANSPORTED'}
-    $check.Add('RESOURCE_IDENTITY_PINNED_INSIDE_ENCODED_BOOTSTRAP')
+    $check.Add('RESOURCE_IDENTITY_PINNED_INSIDE_BOUNDED_INMEMORY_BOOTSTRAP')
     $helperPath=(Resolve-Path (Join-Path $PSScriptRoot '..\installer\TBME_Setup_Elevated_Helper.ps1')).Path
     $tokens=$null;$errors=$null
     $ast=[Management.Automation.Language.Parser]::ParseFile($helperPath,[ref]$tokens,[ref]$errors)

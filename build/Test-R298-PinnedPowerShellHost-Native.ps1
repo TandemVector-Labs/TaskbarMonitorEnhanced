@@ -48,7 +48,7 @@ try{
     }
     $assembly=[Reflection.Assembly]::LoadFile([IO.Path]::GetFullPath($setup))
     $type=$assembly.GetType('SetupProgram',$true)
-    $method=$type.GetMethod('BuildElevatedSensorProcessInfo',[Reflection.BindingFlags]'NonPublic,Static')
+    $method=$type.GetMethod('BuildElevatedSensorProcessInfoWithPipe',[Reflection.BindingFlags]'NonPublic,Static')
     $resolver=$type.GetMethod('TrustedSystemPowerShellPath',[Reflection.BindingFlags]'NonPublic,Static')
     if(!$method -or !$resolver){throw 'R298_TESTABLE_ELEVATION_INFO_FACTORY_MISSING'}
     $system=[IO.Path]::GetFullPath([Environment]::SystemDirectory)
@@ -69,11 +69,13 @@ try{
         }
     }
     $checks.Add('NATIVE_HOST_PATH_SEGMENTS_NOT_REPARSE')
-    $args4=[object[]]::new(4)
+    $args4=[object[]]::new(6)
     $args4[0]=[string]'Install'
     $args4[1]=[string]([IO.Path]::Combine($env:RUNNER_TEMP,('tbme_setup_'+('a'*32))))
     $args4[2]=[string]$app
     $args4[3]=[string]([Security.Principal.WindowsIdentity]::GetCurrent().Name)
+    $args4[4]=[string]('tbme_sensor_'+('a'*32))
+    $args4[5]=[string]('b'*32)
     $info=[Diagnostics.ProcessStartInfo]$method.Invoke($null,$args4)
     if(-not [string]::Equals($info.FileName,$expected,[StringComparison]::OrdinalIgnoreCase) -or
        -not [string]::Equals($info.WorkingDirectory,([IO.Path]::GetDirectoryName($expected)),[StringComparison]::OrdinalIgnoreCase)){
@@ -85,12 +87,31 @@ try{
     }
     $checks.Add('ORIGINAL_UAC_RUNAS_SHELL_CONTRACT_PRESERVED')
     $prefix='-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand '
-    if(-not $info.Arguments.StartsWith($prefix,[StringComparison]::Ordinal) -or
-       $info.Arguments.Contains(' -File ') -or $info.Arguments.Contains('ExecutionPolicy Bypass') -or
-       $info.Arguments.Length -gt 32080){
-       throw 'R298_POWER_SHELL_SCRIPT_ENTRY_WAS_WEAKENED'
+    $inlinePrefix='-NoProfile -NonInteractive -WindowStyle Hidden -Command '
+    function Checked-Bootstrap([string]$arguments){
+      if($arguments.Contains(' -File ') -or $arguments.Contains('ExecutionPolicy Bypass')){
+          throw 'R298_USER_WRITABLE_POWERSHELL_SCRIPT_NOT_ALLOWED'
+      }
+      if($arguments.StartsWith($prefix,[StringComparison]::Ordinal) -and
+         $arguments.Length -le 32080){
+          return [Text.Encoding]::Unicode.GetString(
+              [Convert]::FromBase64String($arguments.Substring($prefix.Length)))
+      }
+      if($arguments.StartsWith($inlinePrefix,[StringComparison]::Ordinal) -and
+         $arguments.Length -le 30000 -and
+         $arguments.EndsWith(' }"',[StringComparison]::Ordinal)){
+          return $arguments.Substring($inlinePrefix.Length)
+      }
+      throw 'R298_POWER_SHELL_SCRIPT_ENTRY_WAS_WEAKENED'
     }
-    $checks.Add('TRUSTED_ENCODED_COMMAND_NO_TEMP_SCRIPT')
+    $bootstrap=Checked-Bootstrap $info.Arguments
+    if($bootstrap.Contains([string]$args4[1]) -or
+       $bootstrap.Contains([string]$args4[2]) -or
+       -not $bootstrap.Contains('[ScriptBlock]::Create($code)') -or
+       -not $bootstrap.Contains('-StatusPipe $q -StatusNonce $n')){
+       throw 'R298_SOURCE_OR_IPC_NOT_PE_PINNED'
+    }
+    $checks.Add('TRUSTED_INMEMORY_COMMAND_NO_TEMP_SCRIPT')
     $originalEncoded=$info.Arguments
     [void][IO.Directory]::CreateDirectory($fake)
     $rogue=Join-Path $fake 'powershell.exe'
@@ -112,22 +133,18 @@ try{
        $tamper.UseShellExecute -ne $true){
        throw 'R298_ARGUMENTS_OR_UAC_VERB_CHANGED_BY_ATTACKER_SEARCH_PATH'
     }
-    $checks.Add('ENCODED_ARGUMENTS_UNCHANGED_DURING_PATH_POISONING')
+    $checks.Add('INMEMORY_ARGUMENTS_UNCHANGED_DURING_PATH_POISONING')
     if((SHA $rogue) -cne $beforeFake){throw 'R298_FAKE_POWERSHELL_EXECUTED_OR_MODIFIED'}
     $checks.Add('ATTACKER_FAKE_EXECUTABLE_UNCHANGED_NOT_EXECUTED')
     $args4[0]=[string]'Uninstall'
     $uninstall=[Diagnostics.ProcessStartInfo]$method.Invoke($null,$args4)
+    $uninstallSource=Checked-Bootstrap $uninstall.Arguments
     if(-not [string]::Equals($uninstall.FileName,$expected,[StringComparison]::OrdinalIgnoreCase) -or
-       $uninstall.Arguments -cnotmatch '\-Mode ''Uninstall''' -or
-       $uninstall.Arguments.Contains(' -File ')){
-       # Mode is inside the base64 bootstrap rather than a literal argument.
-       $encoded=$uninstall.Arguments.Substring($prefix.Length)
-       $bootstrap=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded))
-       if($bootstrap -cnotmatch "\-Mode 'Uninstall'" -or
-          -not [string]::Equals($uninstall.FileName,$expected,[StringComparison]::OrdinalIgnoreCase) -or
-          $uninstall.Arguments.Contains(' -File ')){
-          throw 'R298_UNINSTALL_MODE_OR_HOST_NOT_PINNED'
-       }
+       -not $uninstall.UseShellExecute -or $uninstall.Verb -cne 'runas' -or
+       $uninstallSource -cnotmatch "\-Mode 'Uninstall'" -or
+       -not $uninstallSource.Contains('[ScriptBlock]::Create($code)') -or
+       -not $uninstallSource.Contains('-StatusPipe $q -StatusNonce $n')){
+        throw 'R298_UNINSTALL_MODE_OR_HOST_NOT_PINNED'
     }
     $checks.Add('UNINSTALL_MODE_USES_SAME_ABSOLUTE_TRUSTED_HOST')
     if((SHA $main) -cne $mainBefore){throw 'R298_GUEST_MAIN_WAS_CHANGED'}

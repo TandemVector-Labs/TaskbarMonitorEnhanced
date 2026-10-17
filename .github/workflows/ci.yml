@@ -66,6 +66,29 @@ jobs:
         shell: pwsh
         run: ./build/Build.ps1
 
+      - name: R080 Windows 5.1 exact embedded Helper/status IPC without UAC
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Test-R080-SensorStatusIpc-Native.ps1 -AssemblyPath (Resolve-Path 'build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe').Path
+
+      - name: R089 native PowerShell fast-exit and malformed IPC frames (no UAC)
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Test-R089-BoundedSensorIpcFrame-Native.ps1 -AssemblyPath (Resolve-Path 'build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe').Path
+
+      - name: R090 exact-typed sensor result JSON schema and no-file-on-reject
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Test-R090-SensorResultSchema-Native.ps1 -AssemblyPath (Resolve-Path 'build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe').Path
+
+      - name: R090 alternate-user SID denied by actual asInvoker IPC pipe (hosted Windows only; no UAC)
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Test-R090-NamedPipeCrossSid-Native.ps1 -AssemblyPath (Resolve-Path 'build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe').Path
       - name: Verify deterministic clean-clone build
         shell: pwsh
         run: ./build/Verify-Determinism.ps1

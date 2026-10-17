@@ -1,6 +1,7 @@
 # R85: hermetic early PawnIO-degrade regression on disposable GitHub Windows.
 # Dedicated R291 native A/B tests exercise the real privileged path boundary.
-# This test mocks only its isolated fixture boundary and PawnIO discovery.
+# Test-only mocks: exact known-folder boundary, PawnIO discovery, user-mode output, and IPC handshake.
+# Production Helper's IPC and no-privileged-AppData-writes are checked separately by R080.
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 # Never write even a test config to a real owner's user profile.
@@ -26,15 +27,22 @@ $ast=[Management.Automation.Language.Parser]::ParseInput($source,[ref]$tok,[ref]
 if($errs.Count -ne 0){throw 'R85 HELPER HAS PARSER ERRORS'}
 $funcs=@($ast.FindAll({param($x)
     $x -is [Management.Automation.Language.FunctionDefinitionAst] -and
-      $x.Name -in @('Get-PawnIOVersion','Assert-SensorPrivilegedBoundary')
+      $x.Name -in @('Get-PawnIOVersion','Assert-SensorPrivilegedBoundary','Write-Log','Write-Result')
 },$true))
-if($funcs.Count -ne 2 -or @($funcs|Where-Object Name -eq 'Get-PawnIOVersion').Count -ne 1 -or
-   @($funcs|Where-Object Name -eq 'Assert-SensorPrivilegedBoundary').Count -ne 1){
-    throw 'R85_TWO_EXACT_MOCK_FUNCTIONS_REQUIRED'
+if($funcs.Count -ne 4 -or @($funcs|Where-Object Name -eq 'Get-PawnIOVersion').Count -ne 1 -or
+   @($funcs|Where-Object Name -eq 'Assert-SensorPrivilegedBoundary').Count -ne 1 -or
+   @($funcs|Where-Object Name -eq 'Write-Log').Count -ne 1 -or
+   @($funcs|Where-Object Name -eq 'Write-Result').Count -ne 1){
+    throw 'R85_FOUR_EXACT_TEST_ONLY_FUNCTIONS_REQUIRED'
 }
 $preflight=$source.IndexOf('$validatedSensorSid=Assert-SensorPrivilegedBoundary',[StringComparison]::Ordinal)
-$logWrite=$source.IndexOf('New-Item -ItemType Directory -Force -Path $LogsRoot',[StringComparison]::Ordinal)
-if($preflight -lt 0 -or $logWrite -le $preflight){throw 'R85_UNMODIFIED_PRODUCTION_GUARD_MISSING'}
+$transport=$source.IndexOf('SENSOR_STATUS_CHANNEL_REQUIRED',[StringComparison]::Ordinal)
+if($preflight -lt 0 -or $transport -le $preflight -or
+   $source.Contains('New-Item -ItemType Directory -Force -Path $LogsRoot') -or
+   $source.Contains('Add-Content -LiteralPath $LogPath') -or
+   $source.Contains('Set-Content -LiteralPath $ResultPath')){
+    throw 'R85_NO_PRIVILEGED_USER_LOG_WRITES_AND_BOUNDARY_REQUIRED'
+}
 $escapeApp=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([IO.Path]::GetFullPath($App)))
 $escapePayload=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([IO.Path]::GetFullPath($Payload)))
 $escapeUser=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([Security.Principal.WindowsIdentity]::GetCurrent().Name))
@@ -56,12 +64,62 @@ function Assert-SensorPrivilegedBoundary([string]$RequestedMode,[string]$Request
 }
 '@
 $mockBoundary=$mockBoundary.Replace('__APP__',$escapeApp).Replace('__PAYLOAD__',$escapePayload).Replace('__USER__',$escapeUser).Replace('__SID__',$escapeSid)
+
+# Test-only shims persist only inside the initially absent, owned CI fixture.
+# The production helper's actual IPC functions remain independently verified by R080.
+$mockLog=@'
+function Write-Log([string]$Message){
+    $expected=[IO.Path]::GetFullPath((Join-Path $AppRoot 'Logs/sensor_install.log'))
+    if(-not [string]::Equals([IO.Path]::GetFullPath($LogPath),$expected,[StringComparison]::OrdinalIgnoreCase)){
+        throw 'R85_TEST_LOG_PATH_NOT_OWNED'
+    }
+    [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($LogPath))
+    Add-Content -LiteralPath $LogPath -Value $Message -Encoding UTF8
+}
+'@
+$mockResult=@'
+function Write-Result(
+    [string]$Status,[string]$Message,[string]$PawnStatus,
+    [Nullable[int]]$PawnExitCode,[bool]$RebootRequired,[bool]$TaskInstalled,[bool]$SensorHealthy
+){
+    $expected=[IO.Path]::GetFullPath((Join-Path $AppRoot 'Logs/sensor_install_result.json'))
+    if(-not [string]::Equals([IO.Path]::GetFullPath($ResultPath),$expected,[StringComparison]::OrdinalIgnoreCase)){
+        throw 'R85_TEST_RESULT_PATH_NOT_OWNED'
+    }
+    [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($ResultPath))
+    $row=[ordered]@{
+        Status=$Status;Message=$Message;PawnIOStatus=$PawnStatus
+        PawnIOExitCode=$PawnExitCode;RebootRequired=$RebootRequired
+        TaskInstalled=$TaskInstalled;SensorHealthy=$SensorHealthy
+        RollbackPerformed=$RollbackPerformed;Architecture=$ActiveArchitecture
+    }
+    [IO.File]::WriteAllText($ResultPath,($row|ConvertTo-Json -Depth 5 -Compress),[Text.UTF8Encoding]::new($false))
+}
+'@
+
 $mocked=$source
 foreach($fn in @($funcs|Sort-Object {$_.Extent.StartOffset} -Descending)){
-    $replacement=if($fn.Name -ceq 'Get-PawnIOVersion'){"function Get-PawnIOVersion { return '' }"}else{$mockBoundary}
+    $replacement=if($fn.Name -ceq 'Get-PawnIOVersion'){"function Get-PawnIOVersion { return '' }"}
+                 elseif($fn.Name -ceq 'Assert-SensorPrivilegedBoundary'){$mockBoundary}
+                 elseif($fn.Name -ceq 'Write-Log'){$mockLog}
+                 else{$mockResult}
     $mocked=$mocked.Substring(0,$fn.Extent.StartOffset)+$replacement+$mocked.Substring($fn.Extent.EndOffset)
 }
-if(-not $mocked.Contains('R85_MOCK_REJECTS_OUTSIDE_OWNED_FIXTURE')){throw 'R85_BOUNDARY_MOCK_INJECTION_FAILED'}
+$pipeStart=$mocked.IndexOf('if($StatusPipe -cnotmatch',[StringComparison]::Ordinal)
+$pipeEnd=$mocked.IndexOf('$TaskName=',[Math]::Max(0,$pipeStart),[StringComparison]::Ordinal)
+if($pipeStart -lt 0 -or $pipeEnd -le $pipeStart -or
+   -not $mocked.Substring($pipeStart,$pipeEnd-$pipeStart).Contains('SENSOR_STATUS_PEER_NOT_VERIFIED')){
+    throw 'R85_TEST_ONLY_TRANSPORT_MOCK_NOT_SCOPED'
+}
+# The isolated R85 child is never elevated. The production HELLO/PID protocol
+# remains unchanged in Git and is exercised by the separate real R080 test.
+$mocked=$mocked.Substring(0,$pipeStart)+
+    ([Environment]::NewLine+'# R85_TEST_ONLY_NOUAC_IPC_TRANSPORT_STUB'+[Environment]::NewLine)+
+    $mocked.Substring($pipeEnd)
+if(-not $mocked.Contains('R85_MOCK_REJECTS_OUTSIDE_OWNED_FIXTURE') -or
+   -not $mocked.Contains('R85_TEST_ONLY_NOUAC_IPC_TRANSPORT_STUB')){
+    throw 'R85_MOCK_BOUNDARY_INTEGRITY_FAILED'
+}
 $done=$false
 try {
     New-Item -ItemType Directory -Path $Payload -Force -ErrorAction Stop|Out-Null

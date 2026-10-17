@@ -81,7 +81,7 @@ if(-not [IO.File]::Exists($script:trustedHost)){
 $assembly=[Reflection.Assembly]::LoadFile([IO.Path]::GetFullPath($setup))
 $type=$assembly.GetType('SetupProgram',$true)
 $flags=[Reflection.BindingFlags]'Static,NonPublic'
-$builder=$type.GetMethod('BuildElevatedHelperCommand',$flags)
+$builder=$type.GetMethod('BuildElevatedHelperCommandWithPipe',$flags)
 $hostMethod=$type.GetMethod('TrustedSystemPowerShellPath',$flags)
 if(!$builder -or !$hostMethod){throw 'R304_COMPILED_METHODS_NOT_FOUND'}
 $hostSource=[string]$hostMethod.Invoke($null,$null)
@@ -89,9 +89,12 @@ if(-not [string]::Equals($hostSource,$script:trustedHost,[StringComparison]::Ord
  throw 'R304_SYSTEM_POWER_SHELL_HOST_NOT_PINNED'
 }
 $checks.Add('TRUSTED_ABSOLUTE_SYSTEM_HOST_PINNED')
+# R080 tests the production six-argument builder, not the legacy fixture shim.
+$pipe='tbme_sensor_'+('a'*32)
+$nonce=('b'*32)
 function Command([string]$mode,[string]$payload,[string]$application,[string]$user){
- $arguments=[object[]]::new(4)
- $arguments[0]=$mode;$arguments[1]=$payload;$arguments[2]=$application;$arguments[3]=$user
+ $arguments=[object[]]@([string]$mode,[string]$payload,[string]$application,
+                         [string]$user,[string]$script:pipe,[string]$script:nonce)
  return [string]$builder.Invoke($null,$arguments)
 }
 $user=[string]([Security.Principal.WindowsIdentity]::GetCurrent().Name)
@@ -99,20 +102,27 @@ $normalPayload=Join-Path $env:RUNNER_TEMP ('tbme_setup_'+('a'*32))
 $normalRoot=Join-Path $env:WINDIR 'R304_Expected_PreWrite_Refusal'
 $normal=Command Install $normalPayload $normalRoot $user
 $encodedPrefix='-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand '
-if(-not $normal.StartsWith($encodedPrefix,[StringComparison]::Ordinal) -or
-   $normal.Length -gt 32080){
- throw 'R304_SHORT_ENCODEDCOMMAND_BACKWARD_COMPAT_FAILED'
+$commandPrefix='-NoProfile -NonInteractive -WindowStyle Hidden -Command '
+$normalEncoded=$normal.StartsWith($encodedPrefix,[StringComparison]::Ordinal)
+$normalInline=$normal.StartsWith($commandPrefix,[StringComparison]::Ordinal)
+if((!$normalEncoded -and !$normalInline) -or
+   ($normalEncoded -and $normal.Length -gt 32080) -or
+   ($normalInline -and ($normal.Length -gt 30000 -or
+      $normal.Contains($normalPayload) -or $normal.Contains($normalRoot) -or
+      $normal.Contains(' -File ')))){
+ throw 'R304_SHORT_PROFILE_SAFE_INMEMORY_TRANSPORT_NOT_PROVEN'
 }
-$normalCode=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($normal.Substring($encodedPrefix.Length)))
+$normalCode=if($normalEncoded){
+ [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($normal.Substring($encodedPrefix.Length)))
+}else{$normal.Substring($commandPrefix.Length)}
 $match=[regex]::Match($normalCode,"(?m)^\`$blob=\[Convert\]::FromBase64String\('([A-Za-z0-9+/=]+)'\)")
-if(!$match.Success){throw 'R304_PRIOR_PE_HELPER_BLOB_NOT_ENCODED'}
+if(!$match.Success){throw 'R304_EXACT_PE_HELPER_BLOB_MISSING'}
 $originalBlob=$match.Groups[1].Value
-$checks.Add('SHORT_ENCODEDCOMMAND_AND_PEBLOB_UNCHANGED')
+$checks.Add('SHORT_INMEMORY_TRUSTED_PEBLOB_NO_WRITABLE_SCRIPT')
 $longName='C:\Users\'+('Q'*128)
 $longPayload=$longName+'\AppData\Local\Temp\tbme_setup_'+('b'*32)
 $longRoot=$longName+'\AppData\Local\TaskbarMonitorEnhanced'
 $fallback=Command Install $longPayload $longRoot $user
-$commandPrefix='-NoProfile -NonInteractive -WindowStyle Hidden -Command '
 if(-not $fallback.StartsWith($commandPrefix,[StringComparison]::Ordinal) -or
    $fallback.Contains(' -File ') -or $fallback.Contains('ExecutionPolicy Bypass') -or
    $fallback.Length -gt 30000 -or $fallback.Contains($longRoot) -or
@@ -143,7 +153,7 @@ if(!$limitFailed){throw 'R304_UNBOUNDED_PARAMETER_FAILOPEN'}
 $checks.Add('PER_PARAMETER_LENGTH_CAP_PRESERVED')
 # The native 5.1 child runs as the current guest user, NEVER with Verb=runas.
 # All three invocations must refuse before writing any optional sensor state.
-Expect-FailsClosed 'SHORT_EXISTING_ENCODED_COMMAND_REFUSED_PREWRITE' $normal 'SENSOR_BOUNDARY_APP_ROOT_OUTSIDE_USER_PROFILE'
+Expect-FailsClosed 'SHORT_INMEMORY_TRUSTED_COMMAND_REFUSED_PREWRITE' $normal 'SENSOR_BOUNDARY_APP_ROOT_OUTSIDE_USER_PROFILE'
 Expect-FailsClosed 'LONG_NEW_COMMAND_REFUSED_PREWRITE' $fallback 'SENSOR_BOUNDARY_APP_ROOT_OUTSIDE_USER_PROFILE'
 Expect-FailsClosed 'HOSTILE_LONG_COMMAND_REFUSED_PREWRITE' $attack 'SENSOR_BOUNDARY_APP_ROOT_OUTSIDE_USER_PROFILE'
 if((Hash $main) -cne $original.Main -or
@@ -158,7 +168,9 @@ $record=[ordered]@{
  Status='PASS_LONG_PROFILE_INMEMORY_POWERSHELL_FALLBACK'
  Host=$HostLabel;SourceCommit=$env:GITHUB_SHA;NoUAC=$true
  OriginalOwnerComputerTouched=$false
- ExistingEncodedCommandPreserved=$true
+ ExistingEncodedCommandPreserved=$normalEncoded
+  ExistingInMemoryCommandPreserved=$true
+  NormalTransportKind=$(if($normalEncoded){'EncodedCommand'}else{'InlineCommand'})
  LongProfileFallbackCommandExecuted=$true
  NoUserWritableScriptExecuted=$true
  HostileInputRemainedEncoded=$true

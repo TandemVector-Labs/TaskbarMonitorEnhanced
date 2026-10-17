@@ -203,10 +203,16 @@ jobs:
              $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
              $r.OriginalOwnerComputerTouched -ne $false -or $r.UACOrProtectedServiceCalled -ne $false -or
              $r.ExactTrustedHelperSource -ne $true -or $r.MaliciousTempScriptIgnored -ne $true -or
-             $r.RealNonElevatedEncodedPowerShellCalled -ne $true -or
+             (-not([bool]$r.RealNonElevatedEncodedPowerShellCalled -xor
+                   [bool]$r.RealNonElevatedInlinePowerShellCalled)) -or
+             ($r.RealNonElevatedEncodedPowerShellCalled -eq $true -and
+               ($r.BoundedEncodedCommandLength -lt 1000 -or
+                $r.BoundedEncodedCommandLength -gt 32000)) -or
+             ($r.RealNonElevatedInlinePowerShellCalled -eq $true -and
+               ($r.BoundedInMemoryCommandLength -lt 1000 -or
+                $r.BoundedInMemoryCommandLength -gt 30000)) -or
              $r.InvalidAppRootRejectedBeforeWrite -ne $true -or
              $r.InstalledMainUnchanged -ne $true -or
-             $r.BoundedEncodedCommandLength -lt 1000 -or $r.BoundedEncodedCommandLength -gt 32000 -or
              @($r.Checks).Count -lt 9 -or
              @($r.Checks|Where-Object {$_ -ceq 'QUOTED_HOSTILE_USER_INPUT_ENCODED_AS_DATA'}).Count -ne 1 -or
              @($r.Checks|Where-Object {$_ -ceq 'COMMAND_LINE_INJECTION_SENTINEL_NOT_EXECUTED'}).Count -ne 1){throw 'R293_NATIVE_INMEMORY_RECEIPT_REJECTED'}
@@ -466,7 +472,13 @@ jobs:
              $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
              $r.OriginalOwnerComputerTouched -ne $false -or
              $r.NoUAC -ne $true -or
-             $r.ExistingEncodedCommandPreserved -ne $true -or
+             $r.ExistingInMemoryCommandPreserved -ne $true -or
+             ($r.ExistingEncodedCommandPreserved -eq $true -and
+              $r.NormalTransportKind -cne 'EncodedCommand') -or
+             ($r.ExistingEncodedCommandPreserved -eq $false -and
+              $r.NormalTransportKind -cne 'InlineCommand') -or
+             ($r.ExistingEncodedCommandPreserved -eq $false -and
+              ($r.EncodedCommandLength -lt 1000 -or $r.EncodedCommandLength -gt 30000)) -or
              $r.LongProfileFallbackCommandExecuted -ne $true -or
              $r.NoUserWritableScriptExecuted -ne $true -or
              $r.HostileInputRemainedEncoded -ne $true -or

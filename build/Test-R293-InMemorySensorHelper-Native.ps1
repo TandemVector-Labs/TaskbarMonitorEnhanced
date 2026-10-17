@@ -50,28 +50,39 @@ try{
     }
     $assembly=[Reflection.Assembly]::LoadFile([IO.Path]::GetFullPath($setup))
     $type=$assembly.GetType('SetupProgram',$true)
-    $m=$type.GetMethod('BuildElevatedHelperCommand',[Reflection.BindingFlags]'NonPublic,Static')
+    $m=$type.GetMethod('BuildElevatedHelperCommandWithPipe',[Reflection.BindingFlags]'NonPublic,Static')
     if(!$m){throw 'R293_SETUP_HAS_NO_INMEMORY_ELEVATION_BUILDER'}
-    $args4=[object[]]::new(4)
+    $args4=[object[]]::new(6)
     $args4[0]=[string]'Install'
     $args4[1]=[string]$payload
     # Known bad AppRoot: real trusted Helper must refuse before any filesystem mutation.
     $args4[2]=[string](Join-Path $env:WINDIR 'R293_Refuse_Outside_User_AppRoot')
     $args4[3]=[string]$user
+    $args4[4]=[string]('tbme_sensor_'+('a'*32))
+    $args4[5]=[string]('b'*32)
     $cmd=[string]$m.Invoke($null,$args4)
     $prefix='-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand '
-    if(-not $cmd.StartsWith($prefix,[StringComparison]::Ordinal) -or
-       $cmd.Contains(' -File ') -or $cmd.Contains('ExecutionPolicy Bypass')){
+    $inlinePrefix='-NoProfile -NonInteractive -WindowStyle Hidden -Command '
+    $usesEncoded=$cmd.StartsWith($prefix,[StringComparison]::Ordinal)
+    $usesInline=$cmd.StartsWith($inlinePrefix,[StringComparison]::Ordinal)
+    if((!$usesEncoded -and !$usesInline) -or
+       $cmd.Contains(' -File ') -or $cmd.Contains('ExecutionPolicy Bypass') -or
+       ($usesEncoded -and $cmd.Length -gt 32080) -or
+       ($usesInline -and $cmd.Length -gt 30000) -or
+       $cmd.Contains($args4[1]) -or $cmd.Contains($args4[2])){
         throw 'R293_ELEVATION_COMMAND_USES_UNTRUSTED_FILE_PATH'
     }
-    $encoded=$cmd.Substring($prefix.Length)
-    if($encoded.Length -lt 1000 -or $encoded.Length -gt 32000){
+    $encoded=if($usesEncoded){$cmd.Substring($prefix.Length)}else{''}
+    if($usesEncoded -and ($encoded.Length -lt 1000 -or $encoded.Length -gt 32000)){
         throw 'R293_ENCODED_COMMAND_LENGTH_OUT_OF_BOUNDS'
     }
-    $script=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded))
+    $script=if($usesEncoded){
+        [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded))
+    }else{$cmd.Substring($inlinePrefix.Length)}
     if(-not $script.Contains('[ScriptBlock]::Create($code)') -or
-       $script.Contains(' -File ')){
-        throw 'R293_DECODED_COMMAND_DOES_NOT_RUN_EMBEDDED_SOURCE'
+       $script.Contains(' -File ') -or
+       -not $script.Contains('-StatusPipe $q -StatusNonce $n')){
+        throw 'R293_DECODED_COMMAND_DOES_NOT_RUN_TRUSTED_IPC_SOURCE'
     }
     $checks.Add('NO_USER_WRITABLE_POWERSHELL_FILE_ENTRYPOINT')
     $re=[regex]::Match($script,'(?m)^\$blob=\[Convert\]::FromBase64String\(''([a-zA-Z0-9+/=]+)''\)')
@@ -208,10 +219,12 @@ try{
         UACOrProtectedServiceCalled=$false
         ExactTrustedHelperSource=$true
         MaliciousTempScriptIgnored=$true
-        RealNonElevatedEncodedPowerShellCalled=$true
+        RealNonElevatedEncodedPowerShellCalled=$usesEncoded
+        RealNonElevatedInlinePowerShellCalled=$usesInline
         InvalidAppRootRejectedBeforeWrite=$true
         InstalledMainUnchanged=$true
         BoundedEncodedCommandLength=$encoded.Length
+        BoundedInMemoryCommandLength=$cmd.Length
         Checks=@($checks)
         RecordedUtc=[DateTime]::UtcNow.ToString('o')
     }
