@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param([Parameter(Mandatory=$true)][string]$AssemblyPath)
 
 # R090 — disposable GitHub-hosted Windows ONLY. UAC is disabled on these
@@ -53,7 +53,8 @@ public static class TbmeR090TokenNative
     public static extern bool CloseHandle(IntPtr token);
 }
 "@
-Add-Type -TypeDefinition $pinvoke -ErrorAction Stop$receiver=[Activator]::CreateInstance($t,$true)
+Add-Type -TypeDefinition $pinvoke -ErrorAction Stop
+$receiver=[Activator]::CreateInstance($t,$true)
 $ctx=$null
 $token=[IntPtr]::Zero
 $created=$false
