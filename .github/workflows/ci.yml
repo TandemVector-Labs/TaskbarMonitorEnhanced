@@ -66,6 +66,12 @@ jobs:
         shell: pwsh
         run: ./build/Build.ps1
 
+      - name: R065 trusted PowerShell path and PATH bait regression (no UAC)
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Test-R065-TrustedPowerShell-NoUAC.ps1 -AssemblyPath (Resolve-Path 'build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe').Path
+          if ($LASTEXITCODE -ne 0) { throw 'R065 non-UAC executable trust verification failed.' }
       - name: Verify deterministic clean-clone build
         shell: pwsh
         run: ./build/Verify-Determinism.ps1
