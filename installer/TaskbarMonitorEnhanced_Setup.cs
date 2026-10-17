@@ -181,10 +181,23 @@ internal static partial class SetupProgram
         return "-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand "+encoded;
     }
 
+    // R065 review-only guard: do not elevate a PATH/current-directory resolved executable.
+    static string TrustedWindowsPowerShellExecutable()
+    {
+        string systemDirectory=Environment.SystemDirectory;
+        if(String.IsNullOrWhiteSpace(systemDirectory) || !Path.IsPathRooted(systemDirectory) ||
+           systemDirectory.StartsWith(@"\\",StringComparison.Ordinal))
+            throw new InvalidDataException("Trusted Windows system directory unavailable.");
+        string exe=Path.GetFullPath(Path.Combine(systemDirectory,"WindowsPowerShell","v1.0","powershell.exe"));
+        if(!File.Exists(exe) || (File.GetAttributes(exe)&FileAttributes.ReparsePoint)!=0)
+            throw new InvalidDataException("Trusted Windows PowerShell executable missing or reparse.");
+        return exe;
+    }
     static int ElevatedHelper(string mode,string payload,string appRoot,string user,int timeoutMs)
     {
         ProcessStartInfo psi=new ProcessStartInfo();
-        psi.FileName="powershell.exe";
+        psi.FileName=TrustedWindowsPowerShellExecutable();
+        psi.WorkingDirectory=Path.GetDirectoryName(psi.FileName);
         psi.Arguments=BuildElevatedHelperCommand(mode,payload,appRoot,user);
         psi.UseShellExecute=true;
         psi.Verb="runas";

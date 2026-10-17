@@ -52,6 +52,40 @@ try{
     $type=$assembly.GetType('SetupProgram',$true)
     $m=$type.GetMethod('BuildElevatedHelperCommand',[Reflection.BindingFlags]'NonPublic,Static')
     if(!$m){throw 'R293_SETUP_HAS_NO_INMEMORY_ELEVATION_BUILDER'}
+    # R065: real no-UAC ShellExecute test. A hostile-named executable in
+    # RUNNER_TEMP/PATH must not intercept the trusted absolute Windows executable.
+    $trustedMethod=$type.GetMethod('TrustedWindowsPowerShellExecutable',[Reflection.BindingFlags]'NonPublic,Static')
+    if(!$trustedMethod){throw 'R065_TRUSTED_WINDOWS_POWERSHELL_METHOD_MISSING'}
+    $trusted=[string]$trustedMethod.Invoke($null,$null)
+    $expected=Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+    if(-not [IO.Path]::IsPathRooted($trusted) -or
+       -not [string]::Equals([IO.Path]::GetFullPath($trusted),[IO.Path]::GetFullPath($expected),[StringComparison]::OrdinalIgnoreCase) -or
+       -not (Test-Path -LiteralPath $trusted -PathType Leaf)){
+        throw 'R065_TRUSTED_ABSOLUTE_EXECUTABLE_NOT_RESOLVED'
+    }
+    $bait=Join-Path $dir 'powershell.exe'
+    [IO.File]::WriteAllBytes($bait,[byte[]]@(0x4D,0x5A,0x00,0x01))
+    $oldPath=$env:PATH
+    try{
+        $env:PATH=$dir+';'+$oldPath
+        $psi=[Diagnostics.ProcessStartInfo]::new()
+        $psi.FileName=$trusted
+        $psi.WorkingDirectory=[IO.Path]::GetDirectoryName($trusted)
+        $psi.UseShellExecute=$true
+        $psi.Verb='' # explicitly no UAC: test child only, not an elevated helper
+        $psi.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden
+        $psi.Arguments='-NoProfile -NonInteractive -Command "exit 0"'
+        $child=[Diagnostics.Process]::Start($psi)
+        if(!$child){throw 'R065_TRUSTED_CHILD_MISSING'}
+        try{
+            if(-not $child.WaitForExit(15000)){
+                try{$child.Kill()}catch{}
+                throw 'R065_TRUSTED_CHILD_TIMEOUT'
+            }
+            if($child.ExitCode -ne 0){throw 'R065_TRUSTED_CHILD_EXIT_NONZERO'}
+        }finally{$child.Dispose()}
+    }finally{$env:PATH=$oldPath;if(Test-Path -LiteralPath $bait -PathType Leaf){[IO.File]::Delete($bait)}}
+    $checks.Add('R065_TRUSTED_SYSTEM_POWERSHELL_NO_PATH_BAIT')
     $args4=[object[]]::new(4)
     $args4[0]=[string]'Install'
     $args4[1]=[string]$payload
