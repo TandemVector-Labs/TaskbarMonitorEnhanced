@@ -72,36 +72,26 @@ try{
     'R090_EPHEMERAL_DIFFERENT_LOCAL_ACCOUNT_CREATED=TRUE'
     $pipeName=[string]$t.GetField('Name',[Reflection.BindingFlags]'Public,Instance').GetValue($receiver)
     if($pipeName -notmatch '^tbme_sensor_[a-f0-9]{32}$'){throw 'R090_REAL_RANDOM_PIPE_NAME_INVALID'}
-    $encodedCurrent=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($current))
-    $encodedAlternate=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($sid))
-    $clientSource=@'
-$ErrorActionPreference='Stop'
-$current=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__CURRENT__'))
-$expected=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__ALTERNATE__'))
-$actual=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-if($actual -cne $expected -or $actual -ceq $current){exit 43}
-$c=[IO.Pipes.NamedPipeClientStream]::new('.','__PIPE__',[IO.Pipes.PipeDirection]::InOut)
-try{
-    $c.Connect(3500)
-    # An unexpected successful connection is a security regression.
-    exit 41
-}catch [UnauthorizedAccessException]{
-    exit 42
-}catch [IO.IOException]{
-    exit 42
-}catch [TimeoutException]{
-    exit 42
-}catch{
-    exit 44
-}finally{
-    $c.Dispose()
-}
-'@
-    $clientSource=$clientSource.Replace('__CURRENT__',$encodedCurrent).Replace('__ALTERNATE__',$encodedAlternate).Replace('__PIPE__',$pipeName)
-    $code=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($clientSource))
+    # CreateProcessWithLogonW caps its command line at 1024 chars.
+    # The original test-only -EncodedCommand was 2295 and failed with Win32 87.
+    # This is a NON-ELEVATED test-only inline command, NOT the product Helper.
+    if($current -notmatch '^S-\d+(?:-\d+)+$' -or
+       $sid -notmatch '^S-\d+(?:-\d+)+$'){
+        throw 'R090_LOCAL_SID_SYNTAX_UNEXPECTED'
+    }
+    $clientSource='$a=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;if($a-cne''__ALT__''-or$a-ceq''__SELF__''){exit 43};$c=[IO.Pipes.NamedPipeClientStream]::new(''.'',''__PIPE__'',[IO.Pipes.PipeDirection]::InOut);try{$c.Connect(3500);exit 41}catch [UnauthorizedAccessException]{exit 42}catch [IO.IOException]{exit 42}catch [TimeoutException]{exit 42}catch{exit 44}finally{$c.Dispose()}'
+    $clientSource=$clientSource.Replace('__ALT__',$sid).Replace('__SELF__',$current).Replace('__PIPE__',$pipeName).Trim()
+    if($clientSource.Contains('"') -or $clientSource.Contains([char]0)){
+        throw 'R090_TEST_ONLY_COMMAND_CONTAINS_QUOTE_OR_NUL'
+    }
+    $argsSafe='-NoProfile -NonInteractive -Command "& { '+$clientSource+' }"'
+    if($argsSafe.Length -gt 950){
+        throw 'R090_CREATEPROCESSWITHLOGONW_MAX_1024_GUARD'
+    }
+    'R090_OTHER_USER_PROCESS_ARGUMENT_LENGTH_WITHIN_1024=PASS'
     $ps=Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
     $cred=[Management.Automation.PSCredential]::new(($env:COMPUTERNAME+'\'+$name),$secure)
-    $child=Start-Process -FilePath $ps -Credential $cred -ArgumentList ('-NoProfile -NonInteractive -EncodedCommand '+$code) -WorkingDirectory $env:SystemRoot -PassThru -WindowStyle Hidden -ErrorAction Stop
+    $child=Start-Process -FilePath $ps -Credential $cred -ArgumentList $argsSafe -WorkingDirectory $env:SystemRoot -PassThru -WindowStyle Hidden -ErrorAction Stop
     if(-not $child){throw 'R090_ALTERNATE_PROCESS_UNAVAILABLE'}
     if(-not $child.WaitForExit(12000)){
         try{$child.Kill()}catch{}
