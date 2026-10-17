@@ -43,6 +43,7 @@ $t=$asm.GetType('SetupProgram+SensorStatusReceiver',$true)
 $pinvoke=@"
 using System;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 public static class TbmeR090TokenNative
 {
     [DllImport("advapi32.dll",EntryPoint="LogonUserW",
@@ -51,6 +52,14 @@ public static class TbmeR090TokenNative
        string password,int logonType,int provider,out IntPtr token);
     [DllImport("kernel32.dll",SetLastError=true)]
     public static extern bool CloseHandle(IntPtr token);
+    // Return the *exact* Win32 CreateFileW security access result: timeout,
+    // pipe-busy and general I/O errors do NOT count as access-denied.
+    [DllImport("kernel32.dll",EntryPoint="CreateFileW",
+       CharSet=CharSet.Unicode,SetLastError=true)]
+    public static extern SafeFileHandle CreateFile(
+       string fileName,uint desiredAccess,uint shareMode,
+       IntPtr securityAttributes,uint creationDisposition,
+       uint flagsAndAttributes,IntPtr templateFile);
 }
 "@
 Add-Type -TypeDefinition $pinvoke -ErrorAction Stop
@@ -97,26 +106,23 @@ try{
     }
     $password=$null
     $ctx=[Security.Principal.WindowsIdentity]::Impersonate($token)
-    $denied=$false;$connected=$false
+    $kernelStatus=-1
+    $pathToPipe='\\.\pipe\'+$pipeName
+    # Request the same duplex rights as an actual NamedPipeClientStream.
+    $requested=[uint32]3221225472 # GENERIC_READ|GENERIC_WRITE (0xc0000000)
     try{
         $effective=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
         if($effective -cne $sid -or $effective -ceq $current){
             throw 'R090_IMPERSONATED_THREAD_OS_SID_NOT_SECOND_ACCOUNT'
         }
-        $client=[IO.Pipes.NamedPipeClientStream]::new(
-            '.',$pipeName,[IO.Pipes.PipeDirection]::InOut)
-        try{
-            $client.Connect(2500)
-            $connected=$true
-        }catch [UnauthorizedAccessException]{
-            $denied=$true
-        }catch [IO.IOException]{
-            $denied=$true
-        }catch [TimeoutException]{
-            $denied=$true
-        }finally{
-            $client.Dispose()
-        }
+        $handle=[TbmeR090TokenNative]::CreateFile(
+           $pathToPipe,$requested,[uint32]0,[IntPtr]::Zero,
+           [uint32]3,[uint32]0,[IntPtr]::Zero)
+        # Marshal.GetLastWin32Error must be captured before closing the handle.
+        $kernelStatus=if($handle.IsInvalid){
+            [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        }else{0}
+        $handle.Dispose()
     }finally{
         $ctx.Undo()
         $ctx.Dispose()
@@ -124,8 +130,24 @@ try{
         [void][TbmeR090TokenNative]::CloseHandle($token)
         $token=[IntPtr]::Zero
     }
-    if($connected){throw 'R090_IMPERSONATED_OTHER_SID_CONNECTED_TO_PRIVATE_PIPE'}
-    if(-not $denied){throw 'R090_ALTERNATE_OS_TOKEN_DENIAL_NOT_OBSERVED'}
+    if($kernelStatus -ne 5){
+        throw ('R090_OTHER_SID_DID_NOT_GET_WIN32_ACCESS_DENIED_5;OS_CODE='+$kernelStatus)
+    }
+    'R090_OTHER_SID_REAL_KERNEL_ACCESS_DENIED_5=PASS'
+    # Positive control is essential: a missing/busy pipe could otherwise
+    # be misreported as a security denial. Prove the same endpoint accepts
+    # the authorized requester SID immediately afterward.
+    $ownHandle=[TbmeR090TokenNative]::CreateFile(
+       $pathToPipe,$requested,[uint32]0,[IntPtr]::Zero,
+       [uint32]3,[uint32]0,[IntPtr]::Zero)
+    $ownerWin32=if($ownHandle.IsInvalid){
+        [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    }else{0}
+    $ownHandle.Dispose()
+    if($ownerWin32 -ne 0){
+        throw ('R090_EXPECTED_SAME_SID_PIPE_POSITIVE_CONTROL_FAILED;OS_CODE='+$ownerWin32)
+    }
+    'R090_ORIGINAL_REQUESTER_SID_CONNECTED_POSITIVE_CONTROL=PASS'
     if([bool]$t.GetProperty('HasResult',[Reflection.BindingFlags]'Public,Instance').GetValue($receiver,$null)){
         throw 'R090_UNAUTHORIZED_FRAME_ADMITTED'
     }
