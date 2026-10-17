@@ -342,6 +342,103 @@ internal static partial class SetupProgram
         // Kept internal for the exact native Windows regression to exercise
         // the *same* persistence logic on a new disposable test-owned directory.
         // The production asInvoker caller always uses its real AppRoot.
+
+        // R090 strict, bounded JSON contract. The transport authenticates a
+        // peer/process/nonce, NOT the semantic contents of its JSON message.
+        // Only a flat object with all source-owned typed fields can ever be
+        // stored as a normal user's sensor status.
+        static void ValidateSensorStatusJson(string json)
+        {
+            var schema=new Dictionary<string,char>(StringComparer.Ordinal)
+            {
+                {"Status",'s'},{"Message",'s'},{"PawnIOStatus",'s'},
+                {"PawnIOExitCode",'i'},{"RebootRequired",'b'},
+                {"TaskInstalled",'b'},{"SensorHealthy",'b'},
+                {"SupervisorHealthy",'b'},{"CpuTransportHealthy",'b'},
+                {"GpuTransportHealthy",'b'},{"StorageTransportHealthy",'b'},
+                {"CpuDataAvailable",'b'},{"Architecture",'s'},
+                {"RollbackPerformed",'b'},{"RollbackSucceeded",'b'},
+                {"PreviousSensorLayerPresent",'b'},{"Time",'s'},{"LogPath",'s'}
+            };
+            if(json==null || json.Length>10000)throw new InvalidDataException("Sensor JSON too large.");
+            // No external JSON package / new assembly dependency: exact
+            // PowerShell ConvertTo-Json flat schema, RFC-style JSON string
+            // escaping, and nonexponential bounded field tokenization.
+            const string member=@"\A\s*""(?<name>[A-Za-z][A-Za-z0-9]*)""\s*:\s*(?<value>""(?:[^""\\\u0000-\u001F]|\\(?:[""\\/bfnrt]|u[0-9a-fA-F]{4}))*""|true|false|null|-?(?:0|[1-9][0-9]*))\s*";
+            int pos=0;
+            Action skip=()=>{while(pos<json.Length && (json[pos]==' ' || json[pos]=='\t' || json[pos]=='\r' || json[pos]=='\n'))pos++;};
+            skip();
+            if(pos>=json.Length || json[pos++]!='{')throw new InvalidDataException("Sensor JSON must be an object.");
+            var seen=new HashSet<string>(StringComparer.Ordinal);
+            var values=new Dictionary<string,string>(StringComparer.Ordinal);
+            while(true)
+            {
+                skip();
+                Match field=Regex.Match(json.Substring(pos),member,RegexOptions.CultureInvariant,
+                                        TimeSpan.FromMilliseconds(600));
+                if(!field.Success)throw new InvalidDataException("Invalid sensor JSON field syntax.");
+                string key=field.Groups["name"].Value;
+                string value=field.Groups["value"].Value;
+                char kind;
+                if(!schema.TryGetValue(key,out kind) || !seen.Add(key))
+                    throw new InvalidDataException("Unknown or repeated sensor JSON field.");
+                bool quoted=value.Length>=2 && value[0]=='"' && value[value.Length-1]=='"';
+                if(kind=='s' && !quoted)throw new InvalidDataException("Sensor string field not quoted.");
+                if(kind=='b' && value!="true" && value!="false")
+                    throw new InvalidDataException("Sensor boolean field invalid.");
+                if(kind=='i' && value!="null")
+                {
+                    int number;
+                    if(!Int32.TryParse(value,NumberStyles.AllowLeadingSign,CultureInfo.InvariantCulture,out number))
+                        throw new InvalidDataException("Sensor numeric field invalid.");
+                }
+                values.Add(key,value);
+                pos+=field.Length;
+                skip();
+                if(pos>=json.Length)throw new InvalidDataException("Truncated sensor JSON object.");
+                if(json[pos]==','){pos++;continue;}
+                if(json[pos]=='}'){pos++;break;}
+                throw new InvalidDataException("Invalid sensor JSON object separator.");
+            }
+            skip();
+            if(pos!=json.Length || seen.Count!=schema.Count)
+                throw new InvalidDataException("Sensor JSON fields incomplete or extra data.");
+            // Status is canonical, unescaped ASCII; ambiguous encodings
+            // cannot silently claim a different product health state.
+            string status=values["Status"];
+            switch(status)
+            {
+                case "\"READY\"":
+                    if(values["SensorHealthy"]!="true" || values["SupervisorHealthy"]!="true" ||
+                       values["RebootRequired"]!="false")
+                        throw new InvalidDataException("READY status contradicts sensor health.");
+                    break;
+                case "\"REBOOT_REQUIRED\"":
+                    if(values["RebootRequired"]!="true")
+                        throw new InvalidDataException("Reboot status has no reboot flag.");
+                    break;
+                case "\"DEGRADED\"":
+                case "\"DEGRADED_DATA\"":
+                case "\"DEGRADED_ROLLED_BACK\"":
+                case "\"DEGRADED_ROLLBACK_FAILED\"":
+                case "\"DEGRADED_OTHER_USER_SENSOR_LAYER_PRESERVED\"":
+                case "\"UNAVAILABLE\"":
+                case "\"UNINSTALLED\"":
+                case "\"UNINSTALL_WARNING\"":
+                    break;
+                default:
+                    throw new InvalidDataException("Unknown sensor status value.");
+            }
+            if(values["Message"]=="\"\"" || values["Architecture"]=="\"\"" ||
+               values["Time"]=="\"\"" || values["LogPath"]=="\"\"")
+                throw new InvalidDataException("Mandatory sensor metadata empty.");
+            if(status=="\"DEGRADED_ROLLED_BACK\"" &&
+               (values["RollbackPerformed"]!="true" || values["RollbackSucceeded"]!="true"))
+                throw new InvalidDataException("Rollback success result inconsistent.");
+            if(status=="\"DEGRADED_ROLLBACK_FAILED\"" && values["RollbackPerformed"]!="true")
+                throw new InvalidDataException("Rollback failure status inconsistent.");
+        }
+
         internal void PersistToUserRoot(string userRoot)
         {
             if(String.IsNullOrWhiteSpace(userRoot) || !Path.IsPathRooted(userRoot))
@@ -356,10 +453,9 @@ internal static partial class SetupProgram
                 throw new InvalidDataException("Sensor IPC result schema or nonce mismatch.");
             string json=new UTF8Encoding(false,true).GetString(Convert.FromBase64String(parts[2]));
             string logs=new UTF8Encoding(false,true).GetString(Convert.FromBase64String(parts[3]));
-            if(json.Length>10000 || logs.Length>25000 ||
-               !json.TrimStart().StartsWith("{",StringComparison.Ordinal) ||
-               String.IsNullOrWhiteSpace(JsonString(json,"Status")))
-                throw new InvalidDataException("Sensor IPC decoded result exceeds schema or size.");
+            if(logs.Length>25000)
+                throw new InvalidDataException("Sensor IPC log exceeds size limit.");
+            ValidateSensorStatusJson(json);
             string logRoot=Path.Combine(canonical,"Logs");
             Directory.CreateDirectory(logRoot);
             if(logs.Length>0)

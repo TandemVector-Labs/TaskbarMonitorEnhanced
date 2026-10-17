@@ -9,8 +9,8 @@ if([string]::IsNullOrWhiteSpace($sourceHead)){throw 'R089_GIT_SOURCE_IDENTITY_UN
 $dll=[IO.Path]::GetFullPath($AssemblyPath)
 if(!(Test-Path -LiteralPath $dll -PathType Leaf)){throw 'R089_REAL_SETUP_PE_NOT_BUILT'}
 if($LocalFixture){
-  $expectedTestDll='06A2A6FA7ECC899C57EDDDAD4BB0BF0B144AB8A836EC0DD962E37F66EF679C9F'
-  if(-not $dll.EndsWith('_r080_safe_v3.dll',[StringComparison]::OrdinalIgnoreCase) -or
+  $expectedTestDll='888B7C27E9158E79D886ED181C72BFDA9E2769B0D34C9BE0D3E56D9B0E66434F'
+  if(-not $dll.EndsWith('_r090_native_disposable_source.dll',[StringComparison]::OrdinalIgnoreCase) -or
      -not $dll.StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()),[StringComparison]::OrdinalIgnoreCase) -or
      (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash -cne $expectedTestDll){
     throw 'R089_LOCAL_FIXTURE_NOT_EXACT_COMPILED_SECURITY_SOURCE'
@@ -62,7 +62,9 @@ try {
     $ack=$reader.ReadLine()
     $reader.Dispose()
     if($ack -cne ('ACK|'+$nonce)){throw 'R089_HANDSHAKE_NOT_ACKNOWLEDGED'}
-    $json='{"Status":"DEGRADED","Message":"R089_TEST_ONLY","RebootRequired":false,"SensorHealthy":false}'
+    # Full, source-owned 18-field schema required by R090, not the former
+    # structurally incomplete R089 fixture; malformed-frame tests stay negative.
+    $json='{"Status":"DEGRADED","Message":"R089_TEST_ONLY","PawnIOStatus":"NOT_STARTED","PawnIOExitCode":null,"RebootRequired":false,"TaskInstalled":false,"SensorHealthy":false,"SupervisorHealthy":false,"CpuTransportHealthy":false,"GpuTransportHealthy":false,"StorageTransportHealthy":false,"CpuDataAvailable":false,"Architecture":"R089_TEST_ONLY","RollbackPerformed":false,"RollbackSucceeded":false,"PreviousSensorLayerPresent":false,"Time":"2026-10-17T00:00:00Z","LogPath":"R089_NONIO_REFERENCE"}'
     $logs='R089_BENIGN'
     $j=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
     $l=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($logs))
