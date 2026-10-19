@@ -1,0 +1,111 @@
+name: QA R349 R093 R091 compiled CSharp CodeQL (no upload)
+on:
+  pull_request:
+    paths:
+      - .github/workflows/qa-r349-integration-codeql.yml
+      - installer/**
+      - build/**
+      - .github/workflows/ci.yml
+permissions:
+  contents: read
+  actions: read
+jobs:
+  comparative-codeql:
+    if: >-
+      github.repository == 'Usefull-Skills/TaskbarMonitorEnhanced' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 10 &&
+      github.head_ref == 'qa/r349-r093-r091-integration-20261019' &&
+      github.event.pull_request.base.ref == 'sync/personal-main-9960a06d-review'
+    name: Read-only CSharp CodeQL ${{ matrix.variant }}
+    runs-on: windows-2025
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [r349-parent, integrated-candidate]
+    steps:
+      - name: Checkout only the exact compared immutable revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ matrix.variant == 'r349-parent' && '46c896f123a98aa7fa234bd4b266c8003ebb621e' || github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify disposable Windows and exact source before build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $expected="${{ matrix.variant == 'r349-parent' && '46c896f123a98aa7fa234bd4b266c8003ebb621e' || github.event.pull_request.head.sha }}"
+          if($env:GITHUB_ACTIONS -cne 'true' -or
+             $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or
+             $env:GITHUB_REPOSITORY -cne 'Usefull-Skills/TaskbarMonitorEnhanced' -or
+             $env:GITHUB_HEAD_REF -cne 'qa/r349-r093-r091-integration-20261019' -or
+             $env:GITHUB_BASE_REF -cne 'sync/personal-main-9960a06d-review' -or
+             $env:COMPUTERNAME -match '(?i)EMAD-PC|ALIEMAD|SAEID|LAPTOP' -or
+             (git rev-parse HEAD).Trim() -cne $expected){
+            throw 'QA_CODEQL_REFUSE_NONHOSTED_WRONG_SOURCE_OR_HOST'
+          }
+          'QA_CODEQL_BOUND_CHECKOUT='+$expected
+      - name: Install pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.400
+      - name: Initialize trusted CodeQL manual CSharp analysis
+        uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # observed v4 commit
+        with:
+          languages: csharp
+          build-mode: manual
+          config: |
+            threat-models: local
+      - name: Build four actual Framework projects under CodeQL tracing
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Build.ps1
+          if($LASTEXITCODE -ne 0){throw 'QA_CODEQL_REAL_FRAMEWORK_BUILD_FAILED'}
+          foreach($file in @(
+            'build/_out/App/TaskbarMonitorEnhanced.exe',
+            'build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe',
+            'build/_out/Broker/TaskbarMonitorSensorBroker.exe',
+            'build/_out/Supervisor/TaskbarMonitorSensorSupervisor.exe'
+          )){
+            if(!(Test-Path -LiteralPath $file -PathType Leaf)){
+              throw ('QA_CODEQL_REQUIRED_COMPILED_COMPONENT_MISSING_'+$file)
+            }
+          }
+          'QA_CODEQL_FOUR_NATIVE_FRAMEWORK_COMPONENTS_BUILT=PASS'
+      - name: Analyze locally without uploading CodeQL alerts
+        uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # observed v4 commit
+        with:
+          upload: never
+          output: codeql-results
+      - name: Verify source coverage and report only aggregate counts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $expected="${{ matrix.variant == 'r349-parent' && '46c896f123a98aa7fa234bd4b266c8003ebb621e' || github.event.pull_request.head.sha }}"
+          if((git rev-parse HEAD).Trim() -cne $expected){throw 'QA_CODEQL_SOURCE_IDENTITY_DRIFT'}
+          $sarifs=@(Get-ChildItem -LiteralPath codeql-results -Recurse -Filter '*.sarif' -File)
+          if($sarifs.Count -ne 1){throw ('QA_CODEQL_SARIF_COUNT_'+$sarifs.Count)}
+          $data=Get-Content -LiteralPath $sarifs[0].FullName -Raw | ConvertFrom-Json -Depth 100
+          if(@($data.runs).Count -ne 1){throw 'QA_CODEQL_SARIF_RUN_INVALID'}
+          $run=$data.runs[0]
+          $files=@($run.artifacts | ForEach-Object {$_.location.uri})
+          $setup=@($files | Where-Object {$_ -like '*TaskbarMonitorEnhanced_Setup.cs*'}).Count
+          $main=@($files | Where-Object {$_ -like '*TaskbarMonitorEnhanced.cs*'}).Count
+          $broker=@($files | Where-Object {$_ -like '*TaskbarMonitorSensorBroker.cs*'}).Count
+          if($setup -lt 1 -or $main -lt 1 -or $broker -lt 1){
+            throw 'QA_CODEQL_COMPILED_SOURCE_COVERAGE_INCOMPLETE'
+          }
+          $compilerErrors=0
+          foreach($call in @($run.invocations)){
+            $compilerErrors+=@($call.toolExecutionNotifications | Where-Object {$_.message.text -match 'Error CS[0-9]{4}'}).Count
+          }
+          if($compilerErrors -ne 0){throw 'QA_CODEQL_ANALYSIS_COMPILER_ERRORS'}
+          $findings=@($run.results)
+          $commands=@($findings | Where-Object ruleId -eq 'cs/command-line-injection').Count
+          $paths=@($findings | Where-Object ruleId -eq 'cs/path-injection').Count
+          "QA_CODEQL_SCOPED_ANALYSIS_FINISHED variant=${{ matrix.variant }} exact_source=$expected total=$($findings.Count) command=$commands path=$paths setup_sources=$setup main_sources=$main broker_sources=$broker compiler_errors=$compilerErrors"
+          # Do not publish raw SARIF, local exploit locations or source snippets.
+          'QA_CODEQL_EXECUTION_PASS_NOT_SECURITY_ACCEPTANCE'
