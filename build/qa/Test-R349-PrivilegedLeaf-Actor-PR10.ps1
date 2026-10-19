@@ -4,9 +4,12 @@ param([Parameter(Mandatory=$true)][string]$AuthorityPath,
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 if($PSVersionTable.PSEdition -cne 'Desktop' -or
- $env:GITHUB_ACTIONS -cne 'true' -or $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+ $env:GITHUB_ACTIONS -cne 'true' -or $env:GITHUB_EVENT_NAME -cne 'pull_request' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
  $env:RUNNER_OS -cne 'Windows' -or $env:GITHUB_REPOSITORY -cne 'Usefull-Skills/TaskbarMonitorEnhanced' -or
- $env:GITHUB_REF -cne 'refs/heads/qa/r349-r093-r091-integration-20261019' -or
+ $env:GITHUB_REF -cne 'refs/pull/10/merge' -or
+ $env:GITHUB_HEAD_REF -cne 'qa/r349-r093-r091-integration-20261019' -or
+ $env:GITHUB_BASE_REF -cne 'sync/personal-main-9960a06d-review' -or
+ $env:QA_SOURCE_SHA -cnotmatch '^[0-9a-f]{40}$' -or
  $env:COMPUTERNAME -match '(?i)EMAD-PC|ALIEMAD|SAEID|LAPTOP'){
  throw 'R349_REFUSE_NONDISPOSABLE_WINDOWS'
 }
@@ -22,7 +25,7 @@ if(-not $auth.StartsWith($temp,[StringComparison]::OrdinalIgnoreCase) -or
 }
 $a=Get-Content -LiteralPath $auth -Raw|ConvertFrom-Json
 $leaf=Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)) 'TaskbarMonitorEnhanced\SensorBroker\R349_KNOWN_LEAF.txt'
-if($a.Schema -ne 1 -or $a.Revision -cne 'R349' -or $a.SourceCommit -cne $env:GITHUB_SHA -or
+if($a.Schema -ne 1 -or $a.Revision -cne 'R349' -or $a.SourceCommit -cne $env:QA_SOURCE_SHA -or
  $a.Guest -cne $env:COMPUTERNAME -or $a.ExpectedLeafPath -cne $leaf -or
  $a.Payload -cnotmatch '^R349_PRIVILEGED_WRITE_[0-9]+_[AB]$' -or
  $a.OriginalSha256 -cnotmatch '^[0-9A-F]{64}$'){
@@ -54,7 +57,7 @@ $status=if($writeDenied -and !$unexpected){
  'PASS_PRIVILEGED_WRITE_OPEN_REFUSED_BY_PINNED_LEAF'
 }else{'FAIL_R349_LEAF_WRITE_NOT_EXCLUSIVELY_PINNED'}
 $out=[ordered]@{
- Schema=1;Revision='R349';Status=$status;SourceCommit=$env:GITHUB_SHA
+ Schema=1;Revision='R349';Status=$status;SourceCommit=$env:QA_SOURCE_SHA
  ActorPid=$PID;Guest=$env:COMPUTERNAME;AlreadyAdmin=$true
  WriteDeniedByRealWindowsSharing=$writeDenied;NativeError=$why
  OriginalSHA256=$a.OriginalSha256

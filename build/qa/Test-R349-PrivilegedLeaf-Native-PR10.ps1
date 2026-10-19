@@ -6,15 +6,17 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 if($PSVersionTable.PSEdition -cne 'Desktop' -or
- $env:GITHUB_ACTIONS -cne 'true' -or $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch' -or
+ $env:GITHUB_ACTIONS -cne 'true' -or $env:GITHUB_EVENT_NAME -cne 'pull_request' -or
  $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
  $env:RUNNER_OS -cne 'Windows' -or
  $env:GITHUB_REPOSITORY -cne 'Usefull-Skills/TaskbarMonitorEnhanced' -or
- $env:GITHUB_REF -cne 'refs/heads/qa/r349-r093-r091-integration-20261019' -or
+ $env:GITHUB_REF -cne 'refs/pull/10/merge' -or
+ $env:GITHUB_HEAD_REF -cne 'qa/r349-r093-r091-integration-20261019' -or
+ $env:GITHUB_BASE_REF -cne 'sync/personal-main-9960a06d-review' -or
  $env:COMPUTERNAME -match '(?i)EMAD-PC|ALIEMAD|SAEID|LAPTOP' -or
  $env:GITHUB_RUN_ID -cnotmatch '^[0-9]{5,20}$' -or
- $env:GITHUB_SHA -cnotmatch '^[0-9a-f]{40}$' -or
- (git -C $SourceRoot rev-parse HEAD).Trim() -cne $env:GITHUB_SHA){
+ $env:QA_SOURCE_SHA -cnotmatch '^[0-9a-f]{40}$' -or
+ (git -C $SourceRoot rev-parse HEAD).Trim() -cne $env:QA_SOURCE_SHA){
  throw 'R349_REFUSE_NONDISPOSABLE_OR_WRONG_GIT_SOURCE'
 }
 $admin=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -105,7 +107,7 @@ try{
  if((Get-Acl $protected).Owner -notmatch '(?i)Administrators'){throw 'R349_PROTECTED_OWNER_NOT_ADMIN'}
  Check 'FRESH_ADMIN_OWNED_PROGRAMFILES_AND_KNOWN_LEAF_SHA_CREATED'
  $proof=[ordered]@{
-  Schema=1;Revision='R349';SourceCommit=$env:GITHUB_SHA;Guest=$env:COMPUTERNAME
+  Schema=1;Revision='R349';SourceCommit=$env:QA_SOURCE_SHA;Guest=$env:COMPUTERNAME
   ExpectedLeafPath=$leaf;OriginalSHA256=$beforeHash;Payload=$newText
  }
  [IO.File]::WriteAllText($authority,($proof|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
@@ -129,7 +131,7 @@ try{
  $a=Get-Content -LiteralPath $actorReceipt -Raw|ConvertFrom-Json
  $actorHash=Hash $actorReceipt
  if($a.Status -cne 'PASS_PRIVILEGED_WRITE_OPEN_REFUSED_BY_PINNED_LEAF' -or
-    $a.ActorPid -ne $actorPid -or $a.SourceCommit -cne $env:GITHUB_SHA -or
+    $a.ActorPid -ne $actorPid -or $a.SourceCommit -cne $env:QA_SOURCE_SHA -or
     $a.WriteDeniedByRealWindowsSharing -ne $true -or
     $a.AlreadyAdmin -ne $true -or
     ![string]::IsNullOrWhiteSpace([string]$a.Failure)){
@@ -218,7 +220,7 @@ finally{
  }else{'FAIL_R349_NATIVE_LEAF_SHARING_ACCEPTANCE'}
  if([IO.Directory]::Exists($root)){
   [IO.File]::WriteAllText($receipt,([ordered]@{
-   Schema=1;Revision='R349';Status=$status;Host=$HostLabel;SourceCommit=$env:GITHUB_SHA
+   Schema=1;Revision='R349';Status=$status;Host=$HostLabel;SourceCommit=$env:QA_SOURCE_SHA
    RealUnmodifiedSetupEmbeddedCSharp=$true;AlreadyAdminRunner=$true;DistinctOtherAdminPid=$actorPid
    OriginalLeafSHA256=$beforeHash;AfterReleaseSHA256=$afterHash
    OtherAdminWriteRefused=$denied;PreopenedDeleteHandleRefused=$preopenDeleteRefused
