@@ -130,6 +130,828 @@ jobs:
              ($r.NativeSetupProcessActuallyKilled -ne $true -or
               $r.NativeSetupManagedNoteDeletionWitnessed -ne $true)){throw 'R286_REAL_SETUP_KILL_NOT_WITNESSED'}
           'R286_GUEST_TYPED_RECOVERY_PASS'
+      - name: R290 reject native child junctions before any recovery mutation
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=(Resolve-Path build/Test-R290-ReparseRecovery-Native.ps1).Path
+          $tokens=$null;$errors=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($p,[ref]$tokens,[ref]$errors)
+          if(@($errors).Count){$errors|ForEach-Object{$_.Message};throw 'R290_NATIVE_TEST_PARSER_INVALID'}
+          ./build/Test-R290-ReparseRecovery-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          # The script throws on failure; LASTEXITCODE can be stale from a prior native Setup.
+          # Validate its typed native receipt instead of mistaking that stale code for failure.
+          $p=Join-Path $env:RUNNER_TEMP ('R290_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R290_REPARSE_RECEIPT.json')
+          if(!(Test-Path $p)){throw 'R290_GUEST_RECEIPT_MISSING'}
+          $r=Get-Content $p -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R290' -or
+             $r.Status -cne 'PASS_NATIVE_UPGRADE_CHILD_REPARSE_FAIL_CLOSED' -or
+             $r.Host -cne '${{ matrix.host }}' -or
+             $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OriginalOwnerComputerTouched -ne $false -or
+             $r.NativeWindowsJunctionCreated -ne $true -or
+             $r.NormalPathAcceptance -ne $true -or
+             $r.ParentTraversalRejected -ne $true -or
+             $r.LiveChildJunctionRejected -ne $true -or
+             $r.StageOldJunctionRejected -ne $true -or
+             $r.RecoverPreMutationRejected -ne $true -or
+             $r.NoExternalCanaryMutation -ne $true -or
+             $r.InstalledMainAndConfigUnchanged -ne $true -or
+             $r.NoStageOrLinkResidue -ne $true){throw 'R290_TYPED_NATIVE_REPARSE_RECEIPT_INVALID'}
+          'R290_NATIVE_CHILD_REPARSE_GUARDS_PASS'
+      - name: R291 reject untrusted paths before elevated sensor helper writes
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=(Resolve-Path build/Test-R291-SensorHelperBoundary-Native.ps1).Path
+          $tokens=$null;$errors=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($p,[ref]$tokens,[ref]$errors)
+          if(@($errors).Count){$errors|ForEach-Object{$_.Message};throw 'R291_PS51_NATIVE_HARNESS_PARSE_INVALID'}
+          ./build/Test-R291-SensorHelperBoundary-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $p=Join-Path $env:RUNNER_TEMP ('R291_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R291_BOUNDARY_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $p)){throw 'R291_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $p -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R291' -or
+             $r.Status -cne 'PASS_PRIVILEGED_HELPER_BOUNDARY_NATIVE' -or
+             $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.Host -cne '${{ matrix.host }}' -or
+             $r.OriginalOwnerComputerTouched -ne $false -or
+             $r.ProtectedServicesOrUACInvoked -ne $false -or
+             $r.RealWindowsJunctionUsed -ne $true -or
+             $r.PositiveAndNegativePathChecksPassed -ne $true -or
+             $r.DanglingJunctionRejected -ne $true -or
+             $r.EmbeddedHelperSourceMatched -ne $true -or
+             $r.InstalledMainUnchanged -ne $true -or
+             $r.CheckCount -lt 14 -or
+             @($r.Checks|Where-Object {$_ -ceq 'DOWNLOADS_ROOT_WITH_VALID_NAME_REFUSED'}).Count -ne 1 -or
+             @($r.Checks|Where-Object {$_ -ceq 'NESTED_TEMP_WITH_VALID_NAME_REFUSED'}).Count -ne 1){throw 'R291_TYPED_BOUNDARY_RECEIPT_INVALID'}
+          'R291_NATIVE_ELEVATED_SENSOR_BOUNDARY_GUARDS_PASS'
+      - name: R293 execute trusted inline Helper, never rogue writable Temp script
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=(Resolve-Path build/Test-R293-InMemorySensorHelper-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($p,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R293_NATIVE_PS51_PARSER_INVALID'}
+          ./build/Test-R293-InMemorySensorHelper-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $p=Join-Path $env:RUNNER_TEMP ('R293_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R293_INMEMORY_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $p)){throw 'R293_TYPED_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $p -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R293' -or
+             $r.Status -cne 'PASS_NO_TEMP_SCRIPT_ELEVATION_INLINE_TRUSTED_SOURCE' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OriginalOwnerComputerTouched -ne $false -or $r.UACOrProtectedServiceCalled -ne $false -or
+             $r.ExactTrustedHelperSource -ne $true -or $r.MaliciousTempScriptIgnored -ne $true -or
+             $r.RealNonElevatedInMemoryPowerShellCalled -ne $true -or
+             $r.InvalidAppRootRejectedBeforeWrite -ne $true -or
+             $r.InstalledMainUnchanged -ne $true -or
+             $r.BoundedInMemoryCommandLength -lt 1000 -or $r.BoundedInMemoryCommandLength -gt 30000 -or
+             @($r.Checks).Count -lt 9 -or
+             @($r.Checks|Where-Object {$_ -ceq 'QUOTED_HOSTILE_USER_INPUT_ENCODED_AS_DATA'}).Count -ne 1 -or
+             @($r.Checks|Where-Object {$_ -ceq 'COMMAND_LINE_INJECTION_SENTINEL_NOT_EXECUTED'}).Count -ne 1){throw 'R293_NATIVE_INMEMORY_RECEIPT_REJECTED'}
+          'R293_TRUSTED_INMEMORY_HELPER_NEGATIVE=PASS'
+      - name: R294 verify locked SHA-pinned executable source, tamper and sharing rejection
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=(Resolve-Path build/Test-R294-PayloadProvenance-Native.ps1).Path
+          $tokens=$null;$errors=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($p,[ref]$tokens,[ref]$errors)
+          if(@($errors).Count){$errors|ForEach-Object {$_.Message};throw 'R294_NATIVE_PS51_PARSER_INVALID'}
+          ./build/Test-R294-PayloadProvenance-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $p=Join-Path $env:RUNNER_TEMP ('R294_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R294_PROVENANCE_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $p)){throw 'R294_PROVENANCE_RECEIPT_NOT_CREATED'}
+          $r=Get-Content $p -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R294' -or
+             $r.Status -cne 'PASS_SHA_PINNED_EXCLUSIVE_SINGLE_READ_SENSOR_BINARIES' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OriginalOwnerComputerTouched -ne $false -or $r.UACOrServiceMutation -ne $false -or
+             $r.BothTamperedInputsRejected -ne $true -or $r.ExclusiveLockProved -ne $true -or
+             $r.VerifiedBuffersInstalledToSandboxOnly -ne $true -or $r.InstalledMainUnchanged -ne $true -or
+             $r.ExpectedBrokerSHA256 -cnotmatch '^[A-F0-9]{64}$' -or
+             $r.ExpectedSupervisorSHA256 -cnotmatch '^[A-F0-9]{64}$' -or
+             @($r.Checks).Count -lt 10){throw 'R294_TYPED_NATIVE_PROVENANCE_RECEIPT_FAILED'}
+          'R294_SHA_PINNED_EXCLUSIVE_VERIFIED_BYTES_PASS'
+      - name: R295 verify PE-pinned ZIP dependency bytes and hostile archive rejection
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=(Resolve-Path build/Test-R295-TrustedBackendZip-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($p,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R295_NATIVE_PS51_PARSER_INVALID'}
+          ./build/Test-R295-TrustedBackendZip-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $p=Join-Path $env:RUNNER_TEMP ('R295_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R295_ZIP_PROVENANCE_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $p)){throw 'R295_NATIVE_RECEIPT_NOT_FOUND'}
+          $r=Get-Content -LiteralPath $p -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R295' -or
+             $r.Status -cne 'PASS_PE_PINNED_ZIP_BYTE_ONLY_BACKEND_PROVENANCE' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OriginalOwnerComputerTouched -ne $false -or $r.ElevatedUACOrProtectedServiceUsed -ne $false -or
+             $r.EmbeddedArchiveSHA256 -cnotmatch '^[A-F0-9]{64}$' -or
+             $r.EntryCount -ne 43 -or $r.UncompressedBytes -ne 12203773 -or
+             $r.TamperedArchiveRefused -ne $true -or
+             $r.TraversalAndDuplicateAndLinkRefused -ne $true -or
+             $r.ExclusiveSourceLockVerified -ne $true -or
+             $r.VerifiedBytesOnlyCopiedToSandbox -ne $true -or
+             $r.InstalledMainUnchanged -ne $true -or @($r.Checks).Count -lt 11){throw 'R295_TYPED_ZIP_RECEIPT_INVALID'}
+          'R295_EXACT_ZIP_TRAVERSAL_TAMPER_DUPLICATE_LINK_REFUSAL_PASS'
+      - name: R296 prove old sensor rollback stays in private process memory
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=(Resolve-Path build/Test-R296-RollbackMemory-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($p,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R296_NATIVE_PS51_PARSER_INVALID'}
+          ./build/Test-R296-RollbackMemory-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $p=Join-Path $env:RUNNER_TEMP ('R296_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R296_MEMORY_ROLLBACK_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $p)){throw 'R296_MEMORY_ROLLBACK_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $p -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R296' -or
+             $r.Status -cne 'PASS_MEMORY_ONLY_ROLLBACK_NO_USER_TEMP_TRUST' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OriginalOwnerComputerTouched -ne $false -or $r.UACOrProtectedServiceCalled -ne $false -or
+             $r.PrivateSnapshotFiles -ne 3 -or $r.ForgedUserTempIgnored -ne $true -or
+             $r.TwoJunctionDirectionsRejected -ne $true -or
+             $r.CorruptedOriginalRestoredFromMemory -ne $true -or
+             $r.NoRollbackDiskFiles -ne $true -or $r.InstalledMainUnchanged -ne $true -or
+             @($r.Checks).Count -lt 12){throw 'R296_TYPED_GUEST_MEMORY_RECEIPT_INVALID'}
+          'R296_ROLLBACK_IN_MEMORY_TAMPER_AND_REPARSE=PASS'
+      - name: R297 refuse forged PawnIO automatic elevation from writable Temp
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=(Resolve-Path build/Test-R297-NoPawnAutoElevation-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($p,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R297_NATIVE_PS51_PARSER_INVALID'}
+          ./build/Test-R297-NoPawnAutoElevation-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $p=Join-Path $env:RUNNER_TEMP ('R297_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R297_PAWN_REFUSAL_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $p)){throw 'R297_TYPED_GUEST_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $p -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R297' -or
+             $r.Status -cne 'PASS_NO_UNTRUSTED_PAWNIO_AUTORUN' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OriginalOwnerComputerTouched -ne $false -or $r.UACOrDriverServiceMutation -ne $false -or
+             $r.FakeTempPawnInstallerIgnored -ne $true -or
+             $r.MissingDriverRequiresOfficialExternalConsent -ne $true -or
+             $r.ExistingCompatiblePawnIORetained -ne $true -or $r.MainUnchanged -ne $true -or
+             @($r.Checks).Count -lt 10){throw 'R297_TYPED_PAWNIO_REFUSAL_RECEIPT_INVALID'}
+          'R297_FORGED_TEMP_PAWNIO_ELEVATION_REFUSED=PASS'
+      - name: R298 validate pinned Windows PowerShell executable for runas
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=(Resolve-Path build/Test-R298-PinnedPowerShellHost-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($p,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R298_NATIVE_PS51_PARSER_INVALID'}
+          ./build/Test-R298-PinnedPowerShellHost-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $p=Join-Path $env:RUNNER_TEMP ('R298_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R298_EXPLICIT_POWERSHELL_HOST_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $p)){throw 'R298_TYPED_HOST_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $p -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R298' -or
+             $r.Status -cne 'PASS_ABSOLUTE_SYSTEM_POWERSHELL_RUNAS_HOST' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OriginalOwnerComputerTouched -ne $false -or $r.UACOrProtectedServiceInvoked -ne $false -or
+             $r.AbsoluteHostMatchesSystemDirectory -ne $true -or
+             $r.FakeCwdAndPathExecutableIgnored -ne $true -or $r.BothModesPinned -ne $true -or
+             $r.NoUntrustedScriptFile -ne $true -or $r.InstalledMainUnchanged -ne $true -or
+             @($r.Checks).Count -lt 12){throw 'R298_NATIVE_PINNED_HOST_RECEIPT_INVALID'}
+          'R298_SYSTEM_POWERSHELL_HOST_PINNED=PASS'
+      - name: R299 reject hostile upgrade journal and remove known files without recursive delete
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=(Resolve-Path build/Test-R299-NonrecursiveStageCleanup-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($p,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R299_NATIVE_PS51_PARSER_INVALID'}
+          ./build/Test-R299-NonrecursiveStageCleanup-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $p=Join-Path $env:RUNNER_TEMP ('R299_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R299_NONRECURSIVE_CLEANUP_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $p)){throw 'R299_TYPED_NATIVE_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $p -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R299' -or
+             $r.Status -cne 'PASS_NONRECURSIVE_ALLOWLISTED_STAGE_CLEANUP' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OwnerComputerTouched -ne $false -or
+             $r.UnknownFilePreserved -ne $true -or $r.UnknownEmptyDirPreserved -ne $true -or
+             $r.NativeJunctionRefused -ne $true -or $r.ExternalCanaryPreserved -ne $true -or
+             $r.PositiveNestedStageCleaned -ne $true -or $r.NoStageResidue -ne $true -or
+             $r.InstalledUserFilesUnchanged -ne $true -or
+             @($r.Checks).Count -lt 6){throw 'R299_NATIVE_RESULT_NOT_ACCEPTED'}
+          'R299_BOUNDARY_AND_NONRECURSIVE_CLEANUP=PASS'
+      - name: R300 resume safely retired upgrade journal after interruption
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=(Resolve-Path build/Test-R300-RetiredJournalRecovery-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($p,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R300_PS51_TEST_PARSE_FAILED'}
+          ./build/Test-R300-RetiredJournalRecovery-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $receipt=Join-Path $env:RUNNER_TEMP ('R300_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R300_RETIRED_JOURNAL_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $receipt)){throw 'R300_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R300' -or
+             $r.Status -cne 'PASS_RETIRED_STAGE_RESTART_AND_HOSTILE_REFUSAL' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OwnerComputerTouched -ne $false -or $r.RealProcessKilled -ne $false -or
+             $r.SimulatedPostMoveStop -ne $true -or
+             $r.SameParentDirectoryRename -ne $true -or
+             $r.PostMoveCleanupRetried -ne $true -or $r.InterruptedMetadataCleanupRetried -ne $true -or
+             $r.UnknownFileRefused -ne $true -or $r.ReparseRefused -ne $true -or
+             $r.UnknownOwnerRefused -ne $true -or
+             $r.InstalledMainConfigStateUnchanged -ne $true -or
+             $r.NoRetiredOrActiveStageResidue -ne $true -or
+             @($r.Checks).Count -lt 12){throw 'R300_TYPED_RESULT_INVALID'}
+          'R300_NATIVE_RETIRED_JOURNAL_RECOVERY=PASS'
+      - name: R301 replay rollback cleanup after real disposable worker termination
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=(Resolve-Path build/Test-R301-RolledBackRestart-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($p,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R301_NATIVE_PS51_PARSER_INVALID'}
+          ./build/Test-R301-RolledBackRestart-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $receipt=Join-Path $env:RUNNER_TEMP ('R301_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R301_ROLLBACK_RETRY_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $receipt)){throw 'R301_NATIVE_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R301' -or
+             $r.Status -cne 'PASS_ROLLED_BACK_JOURNAL_RETRY_REAL_WORKER_TERMINATION' -or
+             $r.Host -cne '${{ matrix.host }}' -or
+             $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OwnerComputerTouched -ne $false -or
+             $r.ActualOriginalSetupProcessKilled -ne $false -or
+             $r.ActualDisposableProofWorkerKilled -ne $true -or
+             $r.ProductionWritePhaseExecutedInChild -ne $true -or
+             $r.FreshRecoveryProcessSucceeded -ne $true -or
+             $r.MissingOldSnapshotsAcceptedAfterVerifiedRollback -ne $true -or
+             $r.TamperedPriorFileDigestRejected -ne $true -or
+             $r.RegistryVersionMismatchRejected -ne $true -or
+             $r.UnsupportedVersionRejected -ne $true -or
+             $r.OriginalMainAndSettingsUnchanged -ne $true -or
+             $r.NoJournalResidue -ne $true -or
+             @($r.Checks).Count -lt 8){throw 'R301_TYPED_NATIVE_RECEIPT_INVALID'}
+          'R301_REAL_TEST_WORKER_KILL_AND_RESTART_RECOVERY_PASS'
+      - name: R302 actually terminate original Setup during stage cleanup and resume safely
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=(Resolve-Path build/Test-R302-ActualSetupStageCleanupCrash-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($p,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R302_NATIVE_PS51_TEST_PARSE_FAILED'}
+          ./build/Test-R302-ActualSetupStageCleanupCrash-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $p=Join-Path $env:RUNNER_TEMP ('R302_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R302_REAL_SETUP_CLEANUP_KILL_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $p)){throw 'R302_TYPED_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $p -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R302' -or
+             $r.Status -cne 'PASS_NATIVE_SETUP_KILLED_DURING_STAGE_CLEANUP_RECOVERED' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OriginalOwnerComputerTouched -ne $false -or
+             $r.UnmodifiedCandidateSetupExecuted -ne $true -or
+             $r.NativeExactSetupSuspendedBoundBeforeResume -ne $true -or
+             $r.ActualSetupProcessTerminated -ne $true -or
+             $r.RecoveredBySecondActualSetupProcess -ne $true -or
+             $r.MainSetupConfigStateAndRegistryPreserved -ne $true -or
+             $r.NoStageOrRetiredResidue -ne $true -or
+             $r.ActualSetupPid -le 0 -or $r.SecondSetupPid -le 0 -or
+             $r.ActualSetupPid -eq $r.SecondSetupPid -or
+             $r.DeletedStageFileTrigger -cnotmatch '\.(exe|cs|md|json|config|ico)$' -or
+             $r.NativeWatcherOrFileSystemWatcherOrigin -cnotin @(
+               'NATIVE_KNOWN_STAGE_LEAF_DELETION','FILESYSTEMWATCHER_KNOWN_STAGE_LEAF_DELETION') -or
+             ($r.FileDeletionNotifications + $r.NativeKnownDeletedLeafObservations) -lt 1 -or             $r.JournalFilesAfterKill -lt 1 -or
+             @($r.Tests).Count -lt 5){throw 'R302_NATIVE_ACCEPTANCE_FAILED'}
+          'R302_EXACT_NATIVE_SETUP_PROCESS_KILL_AND_RECOVERY_PASS'
+      - name: R303 reject foreign protected broker owners and permit same-user crash repair
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=(Resolve-Path build/Test-R303-ProtectedSensorOwner-Native.ps1).Path
+          $tokens=$null;$errors=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($p,[ref]$tokens,[ref]$errors)
+          if(@($errors).Count){$errors|ForEach-Object {$_.Message};throw 'R303_NATIVE_PS51_TEST_PARSE_INVALID'}
+          ./build/Test-R303-ProtectedSensorOwner-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $receipt=Join-Path $env:RUNNER_TEMP ('R303_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R303_PROTECTED_SENSOR_OWNER_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $receipt)){throw 'R303_TYPED_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R303' -or
+             $r.Status -cne 'PASS_PROTECTED_SENSOR_OWNER_MARKER_REPAIR_GUARD' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OriginalOwnerComputerTouched -ne $false -or
+             $r.PEEmbeddedSourceExact -ne $true -or
+             $r.RealDisposableWriterKilledAfterMarkerFlush -ne $true -or
+             $r.ActualElevatedHelperProcessKilled -ne $false -or
+             $r.ActualProtectedServicesChanged -ne $false -or
+             $r.MissingOrForeignOwnerRefused -ne $true -or
+             $r.SameOwnerWithoutTaskAccepted -ne $true -or
+             $r.ActualJunctionRefused -ne $true -or
+             $r.MainAndUserDataPreserved -ne $true -or
+             @($r.Checks).Count -lt 14){throw 'R303_NATIVE_OWNER_MARKER_RECEIPT_INVALID'}
+          'R303_SAME_ACCOUNT_PARTIAL_PROTECTED_SENSOR_REPAIR_ALLOWED=PASS'
+      - name: R304 verify long inline PowerShell command without writable scripts
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=(Resolve-Path build/Test-R304-LongInlinePowerShell-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($p,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R304_PS51_PROBE_SYNTAX_INVALID'}
+          ./build/Test-R304-LongInlinePowerShell-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $path=Join-Path $env:RUNNER_TEMP ('R304_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R304_LONG_POWERSHELL_TRANSPORT_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $path)){throw 'R304_TYPED_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $path -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R304' -or
+             $r.Status -cne 'PASS_LONG_PROFILE_INMEMORY_POWERSHELL_FALLBACK' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OriginalOwnerComputerTouched -ne $false -or
+             $r.NoUAC -ne $true -or
+             ($r.ShortEncodedCommandUsed -ne $true -and $r.ShortInlineTransportVerified -ne $true) -or
+             $r.LongProfileFallbackCommandExecuted -ne $true -or
+             $r.NoUserWritableScriptExecuted -ne $true -or
+             $r.HostileInputRemainedEncoded -ne $true -or
+             $r.InstalledUserFilesUnchanged -ne $true -or
+             $r.ShortCommandLength -gt 32080 -or
+             $r.LongFallbackCommandLength -gt 30000 -or
+             @($r.Checks).Count -lt 9){throw 'R304_NATIVE_GATES_NOT_MET'}
+          'R304_NATIVE_SHORT_LONG_HOSTILE_TRANSPORT=PASS'
+      - name: R305 require actual privileged process token SID to match target user
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=(Resolve-Path build/Test-R305-EffectiveUacTokenSid-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($p,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R305_NATIVE_PS51_PARSER_INVALID'}
+          ./build/Test-R305-EffectiveUacTokenSid-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $receipt=Join-Path $env:RUNNER_TEMP ('R305_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R305_ELEVATED_TOKEN_SID_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $receipt)){throw 'R305_RAW_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R305' -or
+             $r.Status -cne 'PASS_EFFECTIVE_PROCESS_TOKEN_SID_BOUND_TO_REQUESTED_USER' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OriginalOwnerComputerTouched -ne $false -or
+             $r.ActualUACOrProtectedServicesInvoked -ne $false -or
+             $r.PrivateEmbeddedPEHelperExact -ne $true -or
+             $r.SameUserIdentityAccepted -ne $true -or
+             $r.CrossAccountSyntheticSidsRejected -ne $true -or
+             $r.RejectedBeforeAnyLogOrServiceWrite -ne $true -or
+             $r.MainConfigStateAndMarkerUnchanged -ne $true -or
+             @($r.Checks).Count -lt 11){throw 'R305_TYPED_NATIVE_TOKEN_SID_ACCEPTANCE_FAILED'}
+          'R305_EFFECTIVE_TOKEN_SID_PREWRITE_BOUNDARY=PASS'
+      - name: R306 synthetic protected rollback journal crash and recovery model
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $src=(Resolve-Path build/Test-R306-DurableRollbackModel.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($src,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R306_PS51_MODEL_PARSER_INVALID'}
+          $prior=Join-Path $env:RUNNER_TEMP ('R305_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R305_ELEVATED_TOKEN_SID_RECEIPT.json')
+          $p=Get-Content -LiteralPath $prior -Raw|ConvertFrom-Json
+          if($p.SourceCommit -cne $env:GITHUB_SHA -or
+             $p.Host -cne '${{ matrix.host }}' -or
+             $p.Status -cne 'PASS_EFFECTIVE_PROCESS_TOKEN_SID_BOUND_TO_REQUESTED_USER'){
+             throw 'R306_PRIOR_NATIVE_SID_EVIDENCE_NOT_EXACT'
+          }
+          $main=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TaskbarMonitorEnhanced/TaskbarMonitorEnhanced.exe'
+          $before=(Get-FileHash -LiteralPath $main -Algorithm SHA256).Hash
+          $native=Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell/v1.0/powershell.exe'
+          $lines=@(& $native -NoLogo -NoProfile -NonInteractive -File $src -Mode Driver)
+          if($LASTEXITCODE -ne 0){throw 'R306_MODEL_PROCESS_FAILED'}
+          $witness=($lines|Where-Object {$_ -like 'R306_PROTOTYPE_PASS Receipt=*'}|Select-Object -Last 1)
+          if(!$witness){throw 'R306_MODEL_POSITIVE_WITNESS_MISSING'}
+          $origin=[string]$witness.Substring('R306_PROTOTYPE_PASS Receipt='.Length).Trim()
+          $actualFile=[IO.Path]::GetFullPath($origin)
+          $actualDir=[IO.Path]::GetDirectoryName($actualFile)
+          $actualParent=[IO.Path]::GetDirectoryName($actualDir)
+          if([IO.Path]::GetFileName($actualFile) -cne 'R306_RECEIPT.json' -or
+             [IO.Path]::GetFileName($actualDir) -cnotmatch '^R306_DISPOSABLE_[0-9a-f]{32}$'){
+             throw 'R306_RESULT_SYNTHETIC_LAYOUT_UNTRUSTED'
+          }
+          $allowed=@($env:TEMP,$env:TMP,$env:RUNNER_TEMP,[IO.Path]::GetTempPath())
+          $valid=@($allowed|Where-Object {$_ -and
+             [string]::Equals([IO.Path]::GetFullPath($_).TrimEnd([IO.Path]::DirectorySeparatorChar),
+                              $actualParent,[StringComparison]::OrdinalIgnoreCase)})
+          if($valid.Count -lt 1){
+             throw ('R306_RESULT_OUTSIDE_SYNTHETIC_TEMP parent='+$actualParent+' allowed='+($allowed -join ';'))
+          }
+          $r=Get-Content -LiteralPath $origin -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R306-PROTOTYPE' -or
+             $r.Commit -cne $env:GITHUB_SHA -or
+             $r.Status -cne 'PASS_SYNTHETIC_DURABLE_SNAPSHOT_KILL_RESTORE_AND_TAMPER_REFUSAL' -or
+             $r.OriginalProtectedServicesTouched -ne $false -or $r.UACInvoked -ne $false -or
+             $r.ProgramFilesWritten -ne $false -or $r.ActualProofWorkerKilled -ne $true -or
+             $r.SameUserFreshProcessRestore -ne $true -or
+             $r.CrossSidRefusedBeforeWrite -ne $true -or $r.MissingReadyMarkerRefused -ne $true -or
+             $r.PreWriteSnapshotHashValidation -ne $true -or
+             $r.ActualSensorHelperKilled -ne $false -or
+             $r.ExternalCanaryPreserved -ne $true){
+             throw 'R306_SYNTHETIC_RECEIPT_NOT_ACCEPTED'
+          }
+          $dest=Join-Path $env:RUNNER_TEMP ('R306_${{ matrix.host }}_'+$env:GITHUB_RUN_ID)
+          if(Test-Path -LiteralPath $dest){throw 'R306_TYPED_RECEIPT_DEST_EXISTS'}
+          [void][IO.Directory]::CreateDirectory($dest)
+          $copy=Join-Path $dest 'R306_ROLLBACK_MODEL_RECEIPT.json'
+          [IO.File]::Copy($origin,$copy,$false)
+          if((Get-FileHash -LiteralPath $origin -Algorithm SHA256).Hash -cne
+             (Get-FileHash -LiteralPath $copy -Algorithm SHA256).Hash){
+             throw 'R306_RAW_RECEIPT_COPY_SHA_MISMATCH'
+          }
+          if((Get-FileHash -LiteralPath $main -Algorithm SHA256).Hash -cne $before){
+             throw 'R306_GUEST_INSTALLED_MAIN_CHANGED'
+          }
+          'R306_SYNTHETIC_JOURNAL_ACTUAL_WORKER_KILL_PASS_NOT_PRODUCTION_ACCEPTANCE'
+      - name: R307 verify owner-protected durable journal DACL with hostile Windows paths
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $test=(Resolve-Path build/Test-R307-ProtectedJournalAcl-Native.ps1).Path
+          $t=$null;$e=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($test,[ref]$t,[ref]$e)
+          if(@($e).Count){$e|ForEach-Object {$_.Message};throw 'R307_WINDOWS_PS51_TEST_PARSE_FAILED'}
+          $old=Join-Path $env:RUNNER_TEMP ('R306_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R306_ROLLBACK_MODEL_RECEIPT.json')
+          $prior=Get-Content -LiteralPath $old -Raw|ConvertFrom-Json
+          if($prior.Commit -cne $env:GITHUB_SHA -or
+             $prior.Status -cne 'PASS_SYNTHETIC_DURABLE_SNAPSHOT_KILL_RESTORE_AND_TAMPER_REFUSAL' -or
+             $prior.ActualProofWorkerKilled -ne $true){throw 'R307_PRIOR_MODEL_EVIDENCE_NOT_EXACT'}
+          $main=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TaskbarMonitorEnhanced/TaskbarMonitorEnhanced.exe'
+          $before=(Get-FileHash -LiteralPath $main -Algorithm SHA256).Hash
+          ./build/Test-R307-ProtectedJournalAcl-Native.ps1 -HostLabel '${{ matrix.host }}'
+          $path=Join-Path $env:RUNNER_TEMP ('R307_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R307_PROTECTED_JOURNAL_ACL_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $path)){throw 'R307_TYPED_NATIVE_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $path -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R307-PROTOTYPE' -or
+             $r.Status -cne 'PASS_PROTECTED_JOURNAL_ACL_TRUST_BOUNDARY_SYNTHETIC' -or
+             $r.SourceCommit -cne $env:GITHUB_SHA -or $r.Host -cne '${{ matrix.host }}' -or
+             $r.OwnerComputerTouched -ne $false -or $r.ActualProtectedSensorTaskTouched -ne $false -or
+             $r.RealProgramFilesWritten -ne $false -or $r.ExplicitProtectedDaclCreated -ne $true -or
+             $r.OwnerTrustedAdministrators -ne $true -or $r.SystemAdminAccessVerified -ne $true -or
+             $r.ManifestFileOwnerTrusted -ne $true -or
+             $r.UserWritableRootRejected -ne $true -or $r.NativeJunctionRejected -ne $true -or
+             $r.FlushedManifestHashMatched -ne $true -or $r.OutsideCanaryPreserved -ne $true -or
+             @($r.Checks).Count -ne 7){throw 'R307_NATIVE_ACL_PROOF_NOT_ACCEPTED'}
+          if((Get-FileHash -LiteralPath $main -Algorithm SHA256).Hash -cne $before){
+             throw 'R307_INSTALLED_DISPOSABLE_GUEST_MAIN_CHANGED'
+          }
+          'R307_SYNTHETIC_PROTECTED_JOURNAL_ACL_PASS_NOT_PRODUCTION_RECOVERY'
+      - name: R308 validate production protected journal prewrite functions on disposable Windows
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $script=(Resolve-Path build/Test-R308-ProtectedPrewrite-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($script,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R308_PS51_PARSER_INVALID'}
+          ./build/Test-R308-ProtectedPrewrite-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $path=Join-Path $env:RUNNER_TEMP ('R308_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R308_JOURNAL_PREWRITE_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $path)){throw 'R308_TYPED_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $path -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R308' -or
+             $r.Status -cne 'PASS_PRODUCTION_JOURNAL_PREWRITE_FUNCTIONS_SYNTHETIC' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OwnerComputerTouched -ne $false -or $r.ActualProgramFilesWritten -ne $false -or
+             $r.ActualScheduledTaskModified -ne $false -or $r.ActualUACInvoked -ne $false -or
+             $r.ActualProtectedSensorHelperKilled -ne $false -or
+             $r.ProductionFunctionsExtractedFromExactPE -ne $true -or
+             $r.JournalReadyPublishedPreMutation -ne $true -or
+             $r.StaleJournalFailsClosed -ne $true -or
+             $r.SIDAndHashAndReparseFailClosed -ne $true -or
+             $r.ExternalUserDataUnchanged -ne $true -or
+             $r.TerminalCleanupAndColdRecoveryImplemented -ne $false -or
+             @($r.Checks).Count -ne 15){throw 'R308_NATIVE_JOURNAL_PREWRITE_PROOF_NOT_ACCEPTED'}
+          'R308_PREWRITE_ONLY_PASS_PRODUCTION_COLD_RECOVERY_STILL_OPEN'
+
+      - name: R309 prove terminal journal and cold file replay with killed proof worker
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $test=(Resolve-Path build/Test-R309-TerminalReplay-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($test,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R309_WINPS51_TEST_PARSER_INVALID'}
+          ./build/Test-R309-TerminalReplay-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $receipt=Join-Path $env:RUNNER_TEMP ('R309_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R309_TERMINAL_REPLAY_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $receipt)){throw 'R309_NATIVE_PROOF_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R309' -or
+             $r.Status -cne 'PASS_SYNTHETIC_TERMINAL_AND_REAL_WORKER_COLD_FILE_REPLAY' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.ActualOriginalElevatedHelperKilled -ne $false -or
+             $r.ActualProtectedTaskTouched -ne $false -or
+             $r.RealProgramFilesWritten -ne $false -or $r.UACInvoked -ne $false -or
+             $r.OwnerComputerTouched -ne $false -or $r.ActualSyntheticWorkerKilled -ne $true -or
+             $r.FreshPowerShellRecoveredOldFiles -ne $true -or
+             $r.ProductionPEReplayFunctionsVerified -ne $true -or
+             $r.TerminalCommittedAndRolledBackVerified -ne $true -or
+             $r.PinnedTaskXmlRecoveredAsDataNotRegistered -ne $true -or
+             $r.TamperAndForeignSidFailedClosed -ne $true -or
+             $r.UnknownFileAndJunctionFailedClosed -ne $true -or
+             $r.OfficialInstalledMainAndUserConfigUnchanged -ne $true -or
+             $r.WorkerPid -le 0 -or $r.RecoveryPid -le 0 -or
+             $r.WorkerPid -eq $r.RecoveryPid -or
+             @($r.Checks).Count -ne 16){throw 'R309_TYPED_PRODUCTION_FUNCTIONS_PROOF_FAILED'}
+          'R309_SYNTHETIC_TERMINAL_AND_REPLAY_PASS_NO_UAC_OR_TASK_RESTORE'
+      - name: R310 kill proof worker inside retired journal cleanup and resume safely
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $test=(Resolve-Path build/Test-R310-RetiredJournal-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($test,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R310_PS51_PROOF_PARSER_INVALID'}
+          ./build/Test-R310-RetiredJournal-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $receipt=Join-Path $env:RUNNER_TEMP ('R310_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R310_RETIRED_JOURNAL_CLEANUP_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $receipt)){throw 'R310_RAW_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R310' -or
+             $r.Status -cne 'PASS_SYNTHETIC_RETIRED_TERMINAL_PARTIAL_CLEANUP_RESTART' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OriginalOwnerComputerTouched -ne $false -or
+             $r.RealProgramFilesWritten -ne $false -or
+             $r.ActualUACOrProtectedTaskModified -ne $false -or
+             $r.ActualOriginalElevatedHelperKilled -ne $false -or
+             $r.RealProofWorkerKilledDuringCleanup -ne $true -or
+             $r.FreshProcessFinishedRetiredCleanup -ne $true -or
+             $r.NonrecursiveKnownMemberDeletion -ne $true -or
+             $r.UnknownFilesAndJunctionFailClosed -ne $true -or
+             $r.ForeignSIDAndPreparedPhaseRefused -ne $true -or
+             $r.TerminatedJournalEventuallyRemoved -ne $true -or
+             $r.UserDataAndCanaryUnchanged -ne $true -or
+             $r.WorkerPid -le 0 -or $r.RestartPid -le 0 -or
+             $r.WorkerPid -eq $r.RestartPid -or
+             @($r.Checks).Count -ne 15){throw 'R310_TYPED_NATIVE_JOURNAL_CLEANUP_FAILED'}
+          'R310_SYNTHETIC_RETIRED_NONRECURSIVE_CRASH_CLEANUP=PASS'
+      - name: R311 verify successful-only protected journal terminal hooks and fail-closed pending
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $test=(Resolve-Path build/Test-R311-HealthyTerminalHooks-Native.ps1).Path
+          $t=$null;$e=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($test,[ref]$t,[ref]$e)
+          if(@($e).Count){$e|ForEach-Object {$_.Message};throw 'R311_PS51_TEST_SYNTAX_INVALID'}
+          ./build/Test-R311-HealthyTerminalHooks-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $receipt=Join-Path $env:RUNNER_TEMP ('R311_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R311_HEALTHY_TERMINAL_HOOK_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $receipt)){throw 'R311_RAW_TYPED_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R311' -or
+             $r.Status -cne 'PASS_SYNTHETIC_NORMAL_HEALTHY_TERMINAL_HOOKS' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OriginalOwnerComputerTouched -ne $false -or
+             $r.ActualProgramFilesWritten -ne $false -or
+             $r.ActualUACPerformed -ne $false -or
+             $r.ActualScheduledTaskModified -ne $false -or
+             $r.OriginalElevatedHelperKilled -ne $false -or
+             $r.ExactPeEntrypointHookOrderValidated -ne $true -or
+             $r.HealthyCommittedAndRetired -ne $true -or
+             $r.UnhealthyAndPreparedPreserved -ne $true -or
+             $r.ColdTerminalCleanupCompleted -ne $true -or
+             $r.WrongSidReparseUnknownRefused -ne $true -or
+             $r.ActualTaskXmlColdRestoreDone -ne $false -or
+             $r.InstalledOwnerDataUnchanged -ne $true -or
+             @($r.Checks).Count -ne 18){throw 'R311_NATIVE_ACCEPTANCE_GATES_UNMET'}
+          'R311_HEALTHY_COMMIT_AND_PENDING_PREPARED_FAIL_CLOSED=PASS'
+      - name: R312 reject foreign or executable-task XML before any cold ScheduledTask restore
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $test=(Resolve-Path build/Test-R312-PinnedTaskXml-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($test,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R312_PS51_NATIVE_TEST_SYNTAX_INVALID'}
+          ./build/Test-R312-PinnedTaskXml-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $receipt=Join-Path $env:RUNNER_TEMP ('R312_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R312_TRUSTED_TASK_XML_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $receipt)){throw 'R312_NATIVE_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R312' -or
+             $r.Status -cne 'PASS_EXACT_PRODUCTION_TASK_XML_POLICY_SYNTHETIC' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.OriginalOwnerComputerTouched -ne $false -or
+             $r.ActualProgramFilesWritten -ne $false -or
+             $r.ActualUACInvoked -ne $false -or
+             $r.ActualScheduledTaskModified -ne $false -or
+             $r.ExactPEPolicyFunctionsLoaded -ne $true -or
+             $r.LegitimateTaskXmlAccepted -ne $true -or
+             $r.CommandPrincipalTriggerAndXmlInjectionRejected -ne $true -or
+             $r.InstalledOwnerDataUnchanged -ne $true -or
+             $r.ProductionColdTaskRegistrationIntegrated -ne $false -or
+             @($r.Checks).Count -ne 18){throw 'R312_NATIVE_TASK_XML_POLICY_GATES_UNMET'}
+          'R312_PINNED_TASK_XML_POLICY_SYNTHETIC=PASS_NO_TASK_REGISTRATION'
+      - name: R313 register and remove only unique disabled disposable ScheduledTask XML
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $test=(Resolve-Path build/Test-R313-DisposableScheduledTask-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($test,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R313_PS51_TEST_PARSER_INVALID'}
+          ./build/Test-R313-DisposableScheduledTask-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $receipt=Join-Path $env:RUNNER_TEMP ('R313_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R313_TASK_REGISTRATION_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $receipt)){throw 'R313_RAW_SCHEDULER_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R313' -or
+             $r.Status -cne 'PASS_EPHEMERAL_DISABLED_SCHEDULED_TASK_REGISTER_EXPORT_UNREGISTER' -or
+             $r.SourceCommit -cne $env:GITHUB_SHA -or $r.Host -cne '${{ matrix.host }}' -or
+             $r.OriginalOwnerComputerTouched -ne $false -or
+             $r.ActualProtectedSensorTaskTouched -ne $false -or
+             $r.RealProgramFilesWritten -ne $false -or
+             $r.ActualUACPerformed -ne $false -or
+             $r.RegisteredOnlyUniqueDisposableTask -ne $true -or
+             $r.NeverEnabledOrExecuted -ne $true -or
+             $r.NoForceRegistration -ne $true -or
+             $r.ColdRegistrationPerformedOnDisposableTask -ne $true -or
+             $r.ExactPrincipalAndCommandReadback -ne $true -or
+             $r.DisposableTaskAbsentAfterTest -ne $true -or
+             $r.UserFilesUnchanged -ne $true -or
+             $r.ProductionPriorTaskColdRestoreIntegrated -ne $false -or
+             [string]::IsNullOrEmpty($r.ExportXmlSHA256) -or
+             @($r.Checks).Count -ne 12){throw 'R313_TYPED_NATIVE_SCHEDULER_GATES_NOT_MET'}
+          'R313_DISABLED_EPHEMERAL_TASK_XML_REAL_SCHEDULER_ROUNDTRIP_PASS'
+      - name: R314 kill worker after task loss and restore disabled task with exact previous files
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $test=(Resolve-Path build/Test-R314-ColdTaskReplay-Native.ps1).Path
+          $tok=$null;$e=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($test,[ref]$tok,[ref]$e)
+          if(@($e).Count){$e|ForEach-Object {$_.Message};throw 'R314_NATIVE_WINPS51_TEST_PARSER_INVALID'}
+          ./build/Test-R314-ColdTaskReplay-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $receipt=Join-Path $env:RUNNER_TEMP ('R314_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R314_TASK_COLD_RESTORE_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $receipt)){throw 'R314_EXACT_GUEST_PROOF_MISSING'}
+          $r=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R314' -or
+             $r.Status -cne 'PASS_DISPOSABLE_TASK_AND_FILES_COLD_RESTORE_AFTER_KILLED_WORKER' -or
+             $r.SourceCommit -cne $env:GITHUB_SHA -or $r.Host -cne '${{ matrix.host }}' -or
+             $r.OriginalOwnerHostTouched -ne $false -or
+             $r.OriginalProtectedTaskTouched -ne $false -or
+             $r.RealProgramFilesWritten -ne $false -or
+             $r.ActualUACInvoked -ne $false -or
+             $r.OriginalElevatedHelperKilled -ne $false -or
+             $r.RealSyntheticWorkerKilled -ne $true -or
+             $r.FreshProcessRestoredActualDisposableScheduledTask -ne $true -or
+             $r.FilesRestoredByteExact -ne $true -or
+             $r.TaskDisabledNeverExecuted -ne $true -or
+             $r.JournalTerminalAndRetiredCleanupComplete -ne $true -or
+             $r.ForeignSidTamperAndUnknownFileRejectedPrewrite -ne $true -or
+             $r.OriginalAppDataUnchanged -ne $true -or
+             $r.WorkerPid -le 0 -or $r.RecoveryPid -le 0 -or
+             $r.WorkerPid -eq $r.RecoveryPid -or
+             @($r.Checks).Count -ne 14){throw 'R314_COLD_TASK_AND_FILES_PROOF_GATES_UNMET'}
+          'R314_REAL_DISPOSABLE_SCHEDULER_COLD_RESTORE_PASS_NO_UAC'
+      - name: R315 invoke production PREPARED cold entrypoint after real disposable task loss
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $test=(Resolve-Path build/Test-R315-ProductionColdEntrypoint-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($test,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R315_PS51_PROOF_SYNTAX_INVALID'}
+          ./build/Test-R315-ProductionColdEntrypoint-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $receipt=Join-Path $env:RUNNER_TEMP ('R315_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R315_TASK_COLD_RESTORE_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $receipt)){throw 'R315_NATIVE_RAW_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R315' -or
+             $r.Status -cne 'PASS_PREPARED_PRODUCTION_ENTRYPOINT_COLD_REPLAY_DISPOSABLE_TASK' -or
+             $r.SourceCommit -cne $env:GITHUB_SHA -or $r.Host -cne '${{ matrix.host }}' -or
+             $r.OriginalOwnerHostTouched -ne $false -or
+             $r.OriginalProtectedTaskTouched -ne $false -or
+             $r.RealProgramFilesWritten -ne $false -or
+             $r.ActualUACInvoked -ne $false -or
+             $r.OriginalElevatedHelperKilled -ne $false -or
+             $r.RealSyntheticWorkerKilled -ne $true -or
+             $r.FreshProcessRestoredActualDisposableScheduledTask -ne $true -or
+             $r.FilesRestoredByteExact -ne $true -or
+             $r.TaskDisabledNeverExecuted -ne $true -or
+             $r.JournalTerminalAndRetiredCleanupComplete -ne $true -or
+             $r.ForeignSidTamperAndUnknownFileRejectedPrewrite -ne $true -or
+             $r.OriginalAppDataUnchanged -ne $true -or
+             $r.ProductionColdEntrypointInvoked -ne $true -or
+             $r.WorkerPid -le 0 -or $r.RecoveryPid -le 0 -or
+             $r.WorkerPid -eq $r.RecoveryPid -or
+             @($r.Checks).Count -ne 15){throw 'R315_NATIVE_ENTRYPOINT_RECOVERY_GATES_NOT_MET'}
+          'R315_EXACT_PE_PREPARED_ENTRYPOINT_COLD_TASK_RECOVERY_SYNTHETIC_PASS'
+      - name: R316 enforce canonical per-user OS known-folder and reject redirected or linked roots
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $test=(Resolve-Path build/Test-R316-CanonicalRoot-Native.ps1).Path
+          $tok=$null;$err=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($test,[ref]$tok,[ref]$err)
+          if(@($err).Count){$err|ForEach-Object {$_.Message};throw 'R316_NATIVE_PS51_PARSER_FAILED'}
+          ./build/Test-R316-CanonicalRoot-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $receipt=Join-Path $env:RUNNER_TEMP ('R316_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R316_TRUSTED_APPROOT_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $receipt)){throw 'R316_RAW_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R316' -or
+             $r.Status -cne 'PASS_OS_KNOWNFOLDER_CANONICAL_APPROOT_AND_REPARSE_REFUSAL' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.ExactCompiledInstallerSource -ne $true -or
+             $r.CanonicalExistingAppRootAccepted -ne $true -or
+             $r.SyntheticSafeProfileAccepted -ne $true -or
+             $r.RelativeUNCTraversalAndForeignProfileRejected -ne $true -or
+             $r.ExistingJunctionAndAliasRejected -ne $true -or
+             $r.UserFilesAndExternalCanaryUnchanged -ne $true -or
+             $r.OriginalOwnerMachineTouched -ne $false -or
+             $r.ActualProtectedTaskTouched -ne $false -or
+             $r.RealProgramFilesWritten -ne $false -or
+             $r.ActualUACInvoked -ne $false -or
+             $r.CodeQLHighAlertsAccepted -ne $false -or
+             @($r.Checks).Count -ne 13){throw 'R316_EXACT_NATIVE_ROOT_BOUNDARY_GATES_NOT_ACCEPTED'}
+          'R316_CANONICAL_KNOWNFOLDER_AND_REPARSE_PROTECTION_PASS_CODEQL_STILL_OPEN'
+      - name: R317 verify PE-pinned nonrecursive uninstall cleanup transport without deletion
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $proof=(Resolve-Path build/Test-R317-UninstallEncodedCleanup-Native.ps1).Path
+          $tok=$null;$errs=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($proof,[ref]$tok,[ref]$errs)
+          if(@($errs).Count){$errs|ForEach-Object {$_.Message};throw 'R317_PS51_TEST_PARSER_INVALID'}
+          ./build/Test-R317-UninstallEncodedCleanup-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $receipt=Join-Path $env:RUNNER_TEMP ('R317_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R317_ENCODED_CLEANUP_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $receipt)){throw 'R317_NATIVE_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R317' -or
+             $r.Status -cne 'PASS_EXACT_PE_INMEMORY_UNINSTALL_CLEANUP_TRANSPORT_SYNTHETIC' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.MainInstallationUntouched -ne $true -or
+             $r.ActualCleanupProcessLaunched -ne $false -or
+             $r.ActualDirectoryDeleted -ne $false -or
+             $r.OriginalOwnerComputerTouched -ne $false -or
+             $r.NoMutableTempBatchOrCmd -ne $true -or
+             $r.ProcessHostAbsolutePinned -ne $true -or
+             $r.ShellArgumentsPureBase64 -ne $true -or
+             $r.WrongRootsAndInjectionRefused -ne $true -or
+             $r.ScriptSyntaxAndTokenGuardVerified -ne $true -or
+             $r.UserDataUnchanged -ne $true -or
+             $r.SyntheticNonrecursiveDeletionVerified -ne $true -or
+             $r.SyntheticJunctionRefusalVerified -ne $true -or
+             $r.TrueUninstallCleanupEndToEndProven -ne $false -or
+             @($r.Checks).Count -ne 23){throw 'R317_TYPED_SAFE_UNINSTALL_TRANSPORT_GATES_NOT_MET'}
+          'R317_PRIVATE_PE_CLEANUP_TRANSPORT_SYNTHETIC_PASS_REAL_UNINSTALL_OPEN'
+      - name: R318 create and inspect COM shortcut without Temp PowerShell script
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $proof=(Resolve-Path build/Test-R318-InProcessShortcut-Native.ps1).Path
+          $tok=$null;$errors=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($proof,[ref]$tok,[ref]$errors)
+          if(@($errors).Count){$errors|ForEach-Object {$_.Message};throw 'R318_PS51_TEST_SYNTAX_INVALID'}
+          ./build/Test-R318-InProcessShortcut-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $receipt=Join-Path $env:RUNNER_TEMP ('R318_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R318_INPROCESS_SHORTCUT_RECEIPT.json')
+          if(-not (Test-Path -LiteralPath $receipt)){throw 'R318_RAW_COM_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R318' -or
+             $r.Status -cne 'PASS_EXACT_PE_INPROCESS_COM_SHORTCUT_AND_NO_TEMP_SCRIPT' -or
+             $r.SourceCommit -cne $env:GITHUB_SHA -or $r.Host -cne '${{ matrix.host }}' -or
+             $r.OriginalOwnerComputerTouched -ne $false -or
+             $r.ActualProgramFilesWritten -ne $false -or
+             $r.ActualUACInvoked -ne $false -or
+             $r.OriginalProtectedSensorTaskTouched -ne $false -or
+             $r.ActualInstalledShortcutChanged -ne $false -or
+             $r.ExactPeSourceAndCOMMethodVerified -ne $true -or
+             $r.WScriptShortcutCreatedReadAndRemoved -ne $true -or
+             $r.AllShortcutPropertiesRoundtripped -ne $true -or
+             $r.PowerShellTempScriptEliminated -ne $true -or
+             $r.MetacharactersTreatedAsData -ne $true -or
+             $r.RelativeAndInvalidPathsRefused -ne $true -or
+             $r.RealInstalledUserDataUnchanged -ne $true -or
+             $r.RealOwnerInstallationOrUninstallInvoked -ne $false -or
+             @($r.Checks).Count -ne 18){throw 'R318_TYPED_NATIVE_SHORTCUT_PROOF_GATES_NOT_MET'}
+          'R318_COM_SHORTCUT_NO_TEMP_SCRIPT_NATIVE_SYNTHETIC_PASS'
+      - name: R321 refuse substituted Main binary and pin its read handle before autolaunch
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $test=(Resolve-Path build/Test-R321-PinnedMainLaunch-Native.ps1).Path
+          $tok=$null;$e=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($test,[ref]$tok,[ref]$e)
+          if(@($e).Count){$e|ForEach-Object {$_.Message};throw 'R321_NATIVE_TEST_PS51_SYNTAX_INVALID'}
+          ./build/Test-R321-PinnedMainLaunch-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $receipt=Join-Path $env:RUNNER_TEMP ('R321_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R321_PINNED_MAIN_PRELAUNCH_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $receipt)){throw 'R321_NATIVE_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R321' -or
+             $r.Status -cne 'PASS_PINNED_MAIN_BEFORE_AUTOLAUNCH_SYNTHETIC' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.ExactPEInstallerSourceVerified -ne $true -or
+             $r.VerifiedMainSHA256 -cnotmatch '^[0-9A-F]{64}$' -or
+             $r.ReadHandleHeldAcrossLaunchPath -ne $true -or
+             $r.ExclusiveWriterDenied -ne $true -or
+             $r.RenameBeforeLaunchDenied -ne $true -or
+             $r.AlteredSameNameBinaryRejected -ne $true -or
+             $r.JunctionAndUnsafePathsRejected -ne $true -or
+             $r.MainWasNotActuallyLaunchedInFixture -ne $true -or
+             $r.OriginalOwnerHostTouched -ne $false -or
+             $r.ActualProtectedTaskTouched -ne $false -or
+             $r.ActualUACInvoked -ne $false -or
+             $r.SecurityCodeQLAccepted -ne $false -or
+             $r.GuestMainAndUserSettingsPreserved -ne $true -or
+             @($r.Checks).Count -ne 14){throw 'R321_TYPED_PINNED_MAIN_PROOF_FAILED'}
+          'R321_PINNED_IMMUTABLE_MAIN_HANDLE_BOUNDED=PASS_NOT_SECURITY_FINAL'
       - name: Preserve bounded guest evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -140,3 +962,111 @@ jobs:
           path: |
             ${{ runner.temp }}/R286_${{ matrix.host }}_${{ github.run_id }}/R286_RECOVERY_RECEIPT.json
             ${{ runner.temp }}/R286_${{ matrix.host }}_${{ github.run_id }}/ARMED.json
+            ${{ runner.temp }}/R290_${{ matrix.host }}_${{ github.run_id }}/R290_REPARSE_RECEIPT.json
+            ${{ runner.temp }}/R291_${{ matrix.host }}_${{ github.run_id }}/R291_BOUNDARY_RECEIPT.json
+            ${{ runner.temp }}/R293_${{ matrix.host }}_${{ github.run_id }}/R293_INMEMORY_RECEIPT.json
+            ${{ runner.temp }}/R294_${{ matrix.host }}_${{ github.run_id }}/R294_PROVENANCE_RECEIPT.json
+            ${{ runner.temp }}/R295_${{ matrix.host }}_${{ github.run_id }}/R295_ZIP_PROVENANCE_RECEIPT.json
+            ${{ runner.temp }}/R296_${{ matrix.host }}_${{ github.run_id }}/R296_MEMORY_ROLLBACK_RECEIPT.json
+            ${{ runner.temp }}/R297_${{ matrix.host }}_${{ github.run_id }}/R297_PAWN_REFUSAL_RECEIPT.json
+            ${{ runner.temp }}/R298_${{ matrix.host }}_${{ github.run_id }}/R298_EXPLICIT_POWERSHELL_HOST_RECEIPT.json
+            ${{ runner.temp }}/R299_${{ matrix.host }}_${{ github.run_id }}/R299_NONRECURSIVE_CLEANUP_RECEIPT.json
+            ${{ runner.temp }}/R300_${{ matrix.host }}_${{ github.run_id }}/R300_RETIRED_JOURNAL_RECEIPT.json
+            ${{ runner.temp }}/R301_${{ matrix.host }}_${{ github.run_id }}/R301_ROLLBACK_RETRY_RECEIPT.json
+            ${{ runner.temp }}/R302_${{ matrix.host }}_${{ github.run_id }}/R302_REAL_SETUP_CLEANUP_KILL_RECEIPT.json
+            ${{ runner.temp }}/R303_${{ matrix.host }}_${{ github.run_id }}/R303_PROTECTED_SENSOR_OWNER_RECEIPT.json
+            ${{ runner.temp }}/R304_${{ matrix.host }}_${{ github.run_id }}/R304_LONG_POWERSHELL_TRANSPORT_RECEIPT.json
+            ${{ runner.temp }}/R305_${{ matrix.host }}_${{ github.run_id }}/R305_ELEVATED_TOKEN_SID_RECEIPT.json
+            ${{ runner.temp }}/R306_${{ matrix.host }}_${{ github.run_id }}/R306_ROLLBACK_MODEL_RECEIPT.json
+            ${{ runner.temp }}/R307_${{ matrix.host }}_${{ github.run_id }}/R307_PROTECTED_JOURNAL_ACL_RECEIPT.json
+            ${{ runner.temp }}/R308_${{ matrix.host }}_${{ github.run_id }}/R308_JOURNAL_PREWRITE_RECEIPT.json
+            ${{ runner.temp }}/R309_${{ matrix.host }}_${{ github.run_id }}/R309_TERMINAL_REPLAY_RECEIPT.json
+            ${{ runner.temp }}/R310_${{ matrix.host }}_${{ github.run_id }}/R310_RETIRED_JOURNAL_CLEANUP_RECEIPT.json
+            ${{ runner.temp }}/R311_${{ matrix.host }}_${{ github.run_id }}/R311_HEALTHY_TERMINAL_HOOK_RECEIPT.json
+            ${{ runner.temp }}/R312_${{ matrix.host }}_${{ github.run_id }}/R312_TRUSTED_TASK_XML_RECEIPT.json
+            ${{ runner.temp }}/R313_${{ matrix.host }}_${{ github.run_id }}/R313_TASK_REGISTRATION_RECEIPT.json
+            ${{ runner.temp }}/R314_${{ matrix.host }}_${{ github.run_id }}/R314_TASK_COLD_RESTORE_RECEIPT.json
+            ${{ runner.temp }}/R315_${{ matrix.host }}_${{ github.run_id }}/R315_TASK_COLD_RESTORE_RECEIPT.json
+            ${{ runner.temp }}/R316_${{ matrix.host }}_${{ github.run_id }}/R316_TRUSTED_APPROOT_RECEIPT.json
+            ${{ runner.temp }}/R321_${{ matrix.host }}_${{ github.run_id }}/R321_PINNED_MAIN_PRELAUNCH_RECEIPT.json
+            ${{ runner.temp }}/R317_${{ matrix.host }}_${{ github.run_id }}/R317_ENCODED_CLEANUP_RECEIPT.json
+            ${{ runner.temp }}/R318_${{ matrix.host }}_${{ github.run_id }}/R318_INPROCESS_SHORTCUT_RECEIPT.json
+
+
+  fresh-install-uninstall:
+    name: R319 fresh private install then uninstall on isolated ${{ matrix.host }}
+    needs: candidate
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: A
+            os: windows-2025
+          - host: B
+            os: windows-2022
+    steps:
+      - name: Checkout exact private candidate source, new isolated host
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Retrieve private not-for-release binaries only
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: R286-PRIVATE-NOT-PUBLIC-RELEASE
+          path: _r284_private_candidate
+      - name: R319 fresh Windows host safety and PowerShell 5.1 syntax preflight
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or
+             $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or
+             $env:COMPUTERNAME -match '(?i)EMAD-PC' -or
+             (git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA){throw 'R319_NOT_EXACT_DISPOSABLE_SOURCE'}
+          $test=(Resolve-Path build/Test-R319-ActualHostedInstallUninstall-Native.ps1).Path
+          $t=$null;$e=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($test,[ref]$t,[ref]$e)
+          if(@($e).Count){$e|ForEach-Object {$_.Message};throw 'R319_NATIVE_PS51_SYNTAX_INVALID'}
+          if(!(Test-Path '_r284_private_candidate/CANDIDATE.json')){throw 'R319_PRIVATE_MANIFEST_MISSING'}
+          $c=Get-Content '_r284_private_candidate/CANDIDATE.json' -Raw|ConvertFrom-Json
+          if($c.Commit -cne $env:GITHUB_SHA -or $c.Private -ne $true -or
+             $c.NotForPublicInstallation -ne $true){throw 'R319_UNTRUSTED_OR_PUBLIC_CANDIDATE'}
+          'R319_NEW_HOST_STRICT_PREFLIGHT_PASS'
+      - name: R319 run actual private 1.7.8 install uninstall and deferred cleanup on new Windows guest
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Test-R319-ActualHostedInstallUninstall-Native.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          $receipt=Join-Path $env:RUNNER_TEMP ('R319_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R319_PRIVATE_INSTALL_UNINSTALL_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $receipt)){throw 'R319_TYPED_RAW_RECEIPT_ABSENT'}
+          $r=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R319' -or
+             $r.Status -cne 'PASS_REAL_PRIVATE_INSTALL_UNINSTALL_ON_DISPOSABLE_HOST' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.PrivateCandidateOnly -ne $true -or $r.OriginalOwnerComputerTouched -ne $false -or
+             $r.ActualWindowsHostedInstallExecuted -ne $true -or
+             $r.ActualWindowsHostedUninstallExecuted -ne $true -or
+             $r.ActualProductUserRootRemoved -ne $true -or
+             $r.ActualProtectedTaskAbsent -ne $true -or
+             $r.ActualProtectedBrokerAbsent -ne $true -or
+             $r.ActualShortcutLinksRemoved -ne $true -or
+             $r.ConfirmedNoBundledPawnIODriverLaunched -ne $true -or
+             $r.TrueUACPromptInteractionTested -ne $false -or
+             $r.InstallExitCode -ne 0 -or $r.UninstallExitCode -ne 0 -or
+             $r.MainInstalledSHA256 -cne $r.MainExpectedSHA256 -or
+             $r.UninstallerInstalledSHA256 -cne $r.SetupExpectedSHA256 -or
+             [string]::IsNullOrWhiteSpace([string]$r.SensorStatus) -or
+             $r.DeferredCleanupSeconds -gt 70 -or $r.Failure -or
+             @($r.Checks).Count -ne 18){throw 'R319_REAL_HOSTED_INSTALL_UNINSTALL_RECEIPT_GATES_FAILED'}
+          'R319_PRIVATE_HOSTED_INSTALL_UNINSTALL_SUCCESS_NON_RELEASE'
+      - name: Preserve bounded R319 guest receipt even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R319-new-host-${{ matrix.host }}-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/R319_${{ matrix.host }}_${{ github.run_id }}/R319_PRIVATE_INSTALL_UNINSTALL_RECEIPT.json

@@ -66,6 +66,81 @@ jobs:
         shell: pwsh
         run: ./build/Build.ps1
 
+      - name: R322 embedded backend ZIP archive/hostile entries (native .NET Framework)
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-BackendZip-R322.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'R322 backend ZIP / PE-resource hostile-archive regression failed.' }
+      - name: R323 owned-shortcut-only deletion preserves unrelated .lnk files (native)
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-ShortcutOwnership-R323.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'R323 foreign-shortcut deletion guard regressed.' }
+      - name: R324 reject foreign existing shortcuts before fresh install writes
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-ShortcutCreation-R324.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'R324 shortcut ownership-before-Save regression failed.' }
+      - name: R324 SHA-pinned ZIP integrity preflight before backend mutation (native)
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-BackendArchiveHash-R324.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'R324 archive SHA integrity and old backend preservation regression failed.' }
+      - name: R326 exact Main CreateProcess without ShellExecute and arguments (native)
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R326-DirectMainProcess-Native.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'R326 pinned Main direct CreateProcess native security tests failed.' }
+      - name: R327 canonical profile Temp instead of mutable TEMP/TMP (native)
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R327-CanonicalSensorTemp-Native.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'R327 canonical sensor Temp, reparse and environment-negative tests failed.' }
+      - name: R328 protected Helper post-preflight log/result boundary (native)
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R328-HelperLogBoundary-Native.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'R328 Sensor Helper user log/result reparse boundary checks failed.' }
+      - name: R329 pinned Main blocks user-profile ancestor rename (native)
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R329-PinnedMainAncestorRename-Native.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'R329 same-process and cross-process pinned Main ancestor rename regression failed.' }
+      - name: R330 native synchronous directory signal fallback only kills exact owned worker (6 tests)
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R330-NativeStageDeleteObserver-Native.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'R330 synthetic exact-PID NativeKnownStageDelete observer regression failed.' }
+      - name: R331 no runner-controlled diagnostic writes in shipped Setup PE (native)
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R331-NoHostedDiagnosticWrite-Native.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'R331 fail-closed Setup minus hosted diagnostic sink native regression failed.' }
+
+      - name: R332 canonical protected sensor reuse, junction and health-state bounds (native)
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R332-SensorReuseBoundary-Native.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'R332 protected sensor reuse boundary native negative checks failed.' }
+
+      - name: R333 exact shortcut name occupancy, dangling reparse and foreign owner (native)
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R333-ShortcutNameOccupied-Native.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'R333 compiled Setup shortcut occupancy negative test failed.' }
+
+      - name: R334 three remaining Setup command sink trust contracts (compiled native)
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R334-CommandSinkContracts-Native.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'R334 no-UAC three-process-command-sink adversarial contract regression failed.' }
+
+      - name: R335 privileged user log/result sink pinned handle boundary (native)
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R335-AtomicUserLogSink-Native.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'R335 compiled privileged Helper scoped handle guard regressions failed.' }
+
       - name: Verify deterministic clean-clone build
         shell: pwsh
         run: ./build/Verify-Determinism.ps1
@@ -192,3 +267,266 @@ jobs:
       - name: Print build manifest
         shell: pwsh
         run: Get-Content ./artifacts/BUILD_MANIFEST.json
+
+  r324-fresh-shortcut:
+    name: R324 genuine fresh Windows shortcut negative ${{ matrix.host }}
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: A
+            os: windows-2025
+          - host: B
+            os: windows-2022
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact disposable test source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Download exact private build
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v8
+        with:
+          name: build-evidence
+          path: r324_built_private
+      - name: Original Setup must refuse foreign Start shortcut before any app root write
+        shell: powershell
+        env:
+          TBME_R324_RUN_FRESH_HOST_NEGATIVE: 'true'
+          R324_HOST_LABEL: ${{ matrix.host }}
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or
+             $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or
+             (git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA) {throw 'R324_GUEST_SOURCE_NOT_PINNED'}
+          $files=@(Get-ChildItem r324_built_private -Recurse -File)
+          $mf=@($files|Where-Object Name -eq 'BUILD_MANIFEST.json')
+          $sx=@($files|Where-Object Name -eq 'TaskbarMonitorEnhanced_Setup_1.7.8.exe')
+          $mx=@($files|Where-Object Name -eq 'TaskbarMonitorEnhanced.exe')
+          if($mf.Count -ne 1 -or $sx.Count -ne 1 -or $mx.Count -ne 1){throw 'R324_UNEXPECTED_CANDIDATE_FILES'}
+          $manifest=Get-Content -LiteralPath $mf[0].FullName -Raw|ConvertFrom-Json
+          $sm=@($manifest.Outputs|Where-Object Name -eq 'TaskbarMonitorEnhanced_Setup_1.7.8.exe')
+          $mm=@($manifest.Outputs|Where-Object Name -eq 'TaskbarMonitorEnhanced.exe')
+          if($sm.Count -ne 1 -or $mm.Count -ne 1 -or
+             (Get-FileHash $sx[0].FullName -Algorithm SHA256).Hash -cne [string]$sm[0].SHA256 -or
+             (Get-FileHash $mx[0].FullName -Algorithm SHA256).Hash -cne [string]$mm[0].SHA256){
+            throw 'R324_CANDIDATE_BINARY_DIGEST_MISMATCH'
+          }
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-ShortcutCreation-R324.ps1 -SetupPath $sx[0].FullName -MainPath $mx[0].FullName
+          if($LASTEXITCODE -ne 0){throw 'R324_REAL_SETUP_NEGATIVE_FAILED'}
+          $proof=Join-Path $env:RUNNER_TEMP ('R324_'+$env:R324_HOST_LABEL+'_'+$env:GITHUB_RUN_ID+'\R324_HOSTED_SHORTCUT_RECEIPT.json')
+          $r=Get-Content -LiteralPath $proof -Raw|ConvertFrom-Json
+          if($r.SourceCommit -cne $env:GITHUB_SHA -or $r.Host -cne $env:R324_HOST_LABEL -or
+             $r.Status -cne 'PASS_REAL_FRESH_SETUP_REFUSES_FOREIGN_START_SHORTCUT_BEFORE_APPROOT' -or
+             !$r.UserAppRootAbsentBeforeAndAfter -or !$r.SameStartShortcutSHA256Preserved -or
+             !$r.UnownedLinkRemovedAfterWitness -or $r.NativeReflectionChecksPassed -ne 8){
+            throw 'R324_TYPED_RECEIPT_CONTRACT_FAILED'
+          }
+      - name: R331 real Setup refuses environment-spoofed diagnostic writes on guest ${{ matrix.host }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or (git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA){
+            throw 'R331_REFUSE_NON_DISPOSABLE_HOST_OR_SOURCE'
+          }
+          $setups=@(Get-ChildItem r324_built_private -Recurse -File -Filter 'TaskbarMonitorEnhanced_Setup_1.7.8.exe')
+          $manifests=@(Get-ChildItem r324_built_private -Recurse -File -Filter 'BUILD_MANIFEST.json')
+          if($setups.Count -ne 1 -or $manifests.Count -ne 1){throw 'R331_EXACT_PRIVATE_BIN_NOT_UNIQUE'}
+          $buildManifest=Get-Content $manifests[0].FullName -Raw|ConvertFrom-Json
+          $setupEntry=@($buildManifest.Outputs|Where-Object Name -eq 'TaskbarMonitorEnhanced_Setup_1.7.8.exe')
+          if($setupEntry.Count -ne 1 -or
+             (Get-FileHash $setups[0].FullName -Algorithm SHA256).Hash -cne $setupEntry[0].SHA256){
+            throw 'R331_HOSTED_SETUP_BINARY_NOT_MANIFEST_PINNED'
+          }
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R331-NoHostedDiagnosticWrite-Native.ps1 -SetupPath $setups[0].FullName -HostedFresh -HostLabel '${{ matrix.host }}'
+          if($LASTEXITCODE -ne 0){throw 'R331_REAL_NEGATIVE_GUEST_TEST_FAILED'}
+          $receipt=Join-Path $env:RUNNER_TEMP ('R331_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R331_HOSTED_DIAGNOSTIC_REMOVAL_RECEIPT.json')
+          if(!(Test-Path $receipt -PathType Leaf)){throw 'R331_HOSTED_TYPED_RECEIPT_MISSING'}
+          $r=Get-Content $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R331' -or $r.Host -cne '${{ matrix.host }}' -or
+             $r.SourceCommit -cne $env:GITHUB_SHA -or $r.SetupSHA256 -cne $setupEntry[0].SHA256 -or
+             $r.Status -cne 'PASS_FRESH_REAL_SETUP_FAIL_CLOSED_WITHOUT_HOSTED_DIAGNOSTIC_WRITE' -or
+             $r.RealSetupExecuted -ne $true -or $r.SetupExit -ne 34 -or
+             $r.DiagnosticOutputAbsent -ne $true -or $r.CanaryPreserved -ne $true -or
+             $r.InstalledAppUntouched -ne $true -or $r.OwnerMachineTouched -ne $false -or
+             $r.MainWasNotLaunched -ne $true -or $r.ElevatedUACNotInvoked -ne $true -or
+             $r.SecurityFinalAccepted -ne $false -or @($r.Checks).Count -ne 12){
+            throw 'R331_HOSTED_NEGATIVE_RECEIPT_IDENTITY_FAILED'
+          }
+      - name: Preserve bounded raw R331 guest diagnostic-negative receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: R331-diag-guest-${{ matrix.host }}-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 7
+          path: ${{ runner.temp }}/R331_${{ matrix.host }}_${{ github.run_id }}/R331_HOSTED_DIAGNOSTIC_REMOVAL_RECEIPT.json
+
+      - name: R332 real compiled Setup rejects ProgramFiles and user-health reparse on guest ${{ matrix.host }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or (git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA){
+            throw 'R332_NOT_THE_DISPOSABLE_EXACT_GUEST'
+          }
+          $setup=@(Get-ChildItem r324_built_private -Recurse -File -Filter 'TaskbarMonitorEnhanced_Setup_1.7.8.exe')
+          $mf=@(Get-ChildItem r324_built_private -Recurse -File -Filter 'BUILD_MANIFEST.json')
+          if($setup.Count -ne 1 -or $mf.Count -ne 1){throw 'R332_CANDIDATE_AND_MANIFEST_NOT_UNIQUE'}
+          $manifest=Get-Content $mf[0].FullName -Raw|ConvertFrom-Json
+          $m=@($manifest.Outputs|Where-Object Name -eq 'TaskbarMonitorEnhanced_Setup_1.7.8.exe')
+          if($m.Count -ne 1 -or (Get-FileHash $setup[0].FullName -Algorithm SHA256).Hash -cne [string]$m[0].SHA256){
+            throw 'R332_SETUP_PRIVATE_BINARY_NOT_MANIFEST_PINNED'
+          }
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R332-SensorReuseBoundary-Native.ps1 -SetupPath $setup[0].FullName -HostedGuest -HostLabel '${{ matrix.host }}'
+          if($LASTEXITCODE -ne 0){throw 'R332_PROTECTED_REUSE_NEGATIVE_TEST_FAILED'}
+          $receipt=Join-Path $env:RUNNER_TEMP ('R332_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R332_SENSOR_REUSE_BOUNDARY_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $receipt -PathType Leaf)){throw 'R332_TYPED_GUEST_RECEIPT_MISSING'}
+          $r=Get-Content -LiteralPath $receipt -Raw |ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R332' -or $r.Host -cne '${{ matrix.host }}' -or
+             $r.SourceCommit -cne $env:GITHUB_SHA -or $r.SetupSHA256 -cne [string]$m[0].SHA256 -or
+             $r.Status -cne 'PASS_CANONICAL_SENSOR_REUSE_JUNCTION_FAIL_CLOSED' -or @($r.Checks).Count -ne 18 -or
+             $r.RealCompiledNetFrameworkSetupLoaded -ne $true -or $r.ProgramFilesRealRootModified -ne $false -or
+             $r.ActualSensorHelperElevated -ne $false -or $r.OwnerInstalledProgramChanged -ne $false -or
+             $r.ExternalCanaryPreserved -ne $true -or $r.AtomicReparseRaceProven -ne $false -or
+             $r.SecurityFinalAccepted -ne $false){
+            throw 'R332_TYPED_GUEST_IDENTITY_OR_SCOPE_INVALID'
+          }
+      - name: Preserve bounded R332 reparse-negative guest receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: R332-reuse-guest-${{ matrix.host }}-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 7
+          path: ${{ runner.temp }}/R332_${{ matrix.host }}_${{ github.run_id }}/R332_SENSOR_REUSE_BOUNDARY_RECEIPT.json
+
+      - name: R333 compiled Setup preserves all occupied foreign Shortcut names on guest ${{ matrix.host }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or (git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA){
+             throw 'R333_NOT_EXACT_DISPOSABLE_GUEST'
+          }
+          $setups=@(Get-ChildItem r324_built_private -Recurse -File -Filter 'TaskbarMonitorEnhanced_Setup_1.7.8.exe')
+          $manifests=@(Get-ChildItem r324_built_private -Recurse -File -Filter 'BUILD_MANIFEST.json')
+          if($setups.Count -ne 1 -or $manifests.Count -ne 1){throw 'R333_PRIVATE_SETUP_OR_MANIFEST_AMBIGUOUS'}
+          $manifest=Get-Content $manifests[0].FullName -Raw|ConvertFrom-Json
+          $identity=@($manifest.Outputs|Where-Object Name -eq 'TaskbarMonitorEnhanced_Setup_1.7.8.exe')
+          if($identity.Count -ne 1 -or (Get-FileHash $setups[0].FullName -Algorithm SHA256).Hash -cne [string]$identity[0].SHA256){
+             throw 'R333_PRIVATE_SETUP_EXACT_SHA_NOT_PINNED'
+          }
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R333-ShortcutNameOccupied-Native.ps1 -SetupPath $setups[0].FullName -HostedGuest -HostLabel '${{ matrix.host }}'
+          if($LASTEXITCODE -ne 0){throw 'R333_NATIVE_GUEST_NEGATIVE_TEST_FAILED'}
+          $receipt=Join-Path $env:RUNNER_TEMP ('R333_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R333_SHORTCUT_OCCUPANCY_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $receipt -PathType Leaf)){throw 'R333_GUEST_RAW_TYPED_RECEIPT_NOT_CREATED'}
+          $r=Get-Content $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R333' -or $r.Host -cne '${{ matrix.host }}' -or
+             $r.SourceCommit -cne $env:GITHUB_SHA -or $r.SetupSHA256 -cne [string]$identity[0].SHA256 -or
+             $r.Status -cne 'PASS_EXACT_SHORTCUT_OCCUPANCY_INCLUDING_DANGLING_REPARSE' -or
+             @($r.Checks).Count -ne 22 -or $r.RealCompiledSetupLoaded -ne $true -or
+             $r.RealMainLaunched -ne $false -or $r.ForeignCanaryPreserved -ne $true -or
+             $r.ActualUacInvoked -ne $false -or $r.OriginalOwnerHostTouched -ne $false -or
+             $r.AtomicPathRaceProven -ne $false -or $r.SecurityFinalAccepted -ne $false){
+             throw 'R333_GUEST_EVIDENCE_CONTRACT_NOT_ACCEPTED'
+          }
+      - name: Preserve bounded R333 shortcut occupancy guest evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: R333-shortcut-guest-${{ matrix.host }}-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 7
+          path: ${{ runner.temp }}/R333_${{ matrix.host }}_${{ github.run_id }}/R333_SHORTCUT_OCCUPANCY_RECEIPT.json
+
+      - name: R334 inspect hostile process command construction on isolated Windows ${{ matrix.host }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or (git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA){
+             throw 'R334_REFUSE_NON_DISPOSABLE_OR_UNPINNED_WINDOWS'
+          }
+          $setups=@(Get-ChildItem r324_built_private -Recurse -File -Filter 'TaskbarMonitorEnhanced_Setup_1.7.8.exe')
+          $manifests=@(Get-ChildItem r324_built_private -Recurse -File -Filter 'BUILD_MANIFEST.json')
+          if($setups.Count -ne 1 -or $manifests.Count -ne 1){throw 'R334_PRIVATE_SETUP_OR_BUILD_MANIFEST_AMBIGUOUS'}
+          $manifest=Get-Content $manifests[0].FullName -Raw|ConvertFrom-Json
+          $identity=@($manifest.Outputs|Where-Object Name -eq 'TaskbarMonitorEnhanced_Setup_1.7.8.exe')
+          if($identity.Count -ne 1 -or
+             (Get-FileHash $setups[0].FullName -Algorithm SHA256).Hash -cne [string]$identity[0].SHA256){
+             throw 'R334_PRIVATE_COMPILED_SETUP_NOT_PINNED'
+          }
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R334-CommandSinkContracts-Native.ps1 -SetupPath $setups[0].FullName -HostedGuest -HostLabel '${{ matrix.host }}'
+          if($LASTEXITCODE -ne 0){throw 'R334_COMMAND_FACTORIES_NATIVE_GUEST_FAILED'}
+          $receipt=Join-Path $env:RUNNER_TEMP ('R334_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R334_COMMAND_SINK_TRUST_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $receipt -PathType Leaf)){throw 'R334_RAW_TYPED_RECEIPT_MISSING'}
+          $r=Get-Content $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R334' -or $r.Host -cne '${{ matrix.host }}' -or
+             $r.SourceCommit -cne $env:GITHUB_SHA -or $r.SetupSHA256 -cne [string]$identity[0].SHA256 -or
+             $r.Status -cne 'PASS_THREE_PROCESS_COMMAND_SINK_TRUST_CONTRACTS' -or
+             @($r.Checks).Count -ne 24 -or $r.CompiledSetupReflected -ne $true -or
+             $r.HelperAndCleanupInputsOnlyInEncodedData -ne $true -or
+             $r.ShaPinnedMainNoShell -ne $true -or $r.NativeUacWasNotInvoked -ne $true -or
+             $r.NoCleanupOrMainProcessLaunched -ne $true -or $r.WholeSecurityAccepted -ne $false){
+             throw 'R334_GUEST_COMMAND_BOUNDARY_TYPED_RECEIPT_INVALID'
+          }
+      - name: Preserve bounded raw R334 command trust guest receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: R334-command-guest-${{ matrix.host }}-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 7
+          path: ${{ runner.temp }}/R334_${{ matrix.host }}_${{ github.run_id }}/R334_COMMAND_SINK_TRUST_RECEIPT.json
+
+      - name: R335 real Setup embeds exact native no-reparse handle guard on guest ${{ matrix.host }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or (git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA){
+             throw 'R335_NATIVE_REFUSE_NON_HOSTED_OR_CHANGED_SOURCE'
+          }
+          $setup=@(Get-ChildItem r324_built_private -Recurse -File -Filter 'TaskbarMonitorEnhanced_Setup_1.7.8.exe')
+          $manifest=@(Get-ChildItem r324_built_private -Recurse -File -Filter 'BUILD_MANIFEST.json')
+          if($setup.Count -ne 1 -or $manifest.Count -ne 1){throw 'R335_BUILD_PROOF_AMBIGUOUS'}
+          $m=Get-Content $manifest[0].FullName -Raw|ConvertFrom-Json
+          $target=@($m.Outputs|Where-Object Name -eq 'TaskbarMonitorEnhanced_Setup_1.7.8.exe')
+          if($target.Count -ne 1 -or
+             (Get-FileHash $setup[0].FullName -Algorithm SHA256).Hash -cne [string]$target[0].SHA256){
+             throw 'R335_PRIVATE_SETUP_NOT_BUILD_MANIFEST_PINNED'
+          }
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R335-AtomicUserLogSink-Native.ps1 -SetupPath $setup[0].FullName -HostedGuest -HostLabel '${{ matrix.host }}'
+          if($LASTEXITCODE -ne 0){throw 'R335_REAL_PRIVATE_SETUP_HANDLE_GUEST_FAILED'}
+          $receipt=Join-Path $env:RUNNER_TEMP ('R335_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R335_ATOMIC_LOG_HANDLE_PROBE.json')
+          if(!(Test-Path $receipt -PathType Leaf)){throw 'R335_EXACT_TYPED_GUEST_RECEIPT_MISSING'}
+          $r=Get-Content $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R335' -or $r.Host -cne '${{ matrix.host }}' -or
+             $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.Status -cne 'PASS_SCOPED_NONDELETE_HANDLE_LOGS_APPROOT_AND_FILE' -or
+             @($r.Checks).Count -ne 23 -or
+             $r.RealElevatedHelperLaunched -ne $false -or
+             $r.ActualProgramFilesModified -ne $false -or
+             $r.AtomicCrossUserUacProven -ne $false -or
+             $r.ForeignCanaryPreserved -ne $true -or
+             $r.SecurityFinalAccepted -ne $false){
+             throw 'R335_HOSTED_GUEST_RECEIPT_CONTRACT_FAILED'
+          }
+      - name: Preserve bounded R335 native user-log-handle proof
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: R335-user-log-handle-${{ matrix.host }}-${{ github.sha }}
+          retention-days: 7
+          if-no-files-found: error
+          path: ${{ runner.temp }}/R335_${{ matrix.host }}_${{ github.run_id }}/R335_ATOMIC_LOG_HANDLE_PROBE.json
+
+      - name: Preserve bounded raw hosted negative receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: R324-fresh-guest-${{ matrix.host }}-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 7
+          path: ${{ runner.temp }}/R324_${{ matrix.host }}_${{ github.run_id }}/R324_HOSTED_SHORTCUT_RECEIPT.json

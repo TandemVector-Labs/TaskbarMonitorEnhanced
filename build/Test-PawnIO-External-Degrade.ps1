@@ -1,29 +1,84 @@
-# R85 hermetic negative runtime test: a missing proprietary PawnIO binary cannot install
-# driver/services or mutate the real host. An isolated copy only mocks the read-only
-# PawnIO version discovery function so installed PawnIO on the developer PC is untouched.
+# R85: hermetic early PawnIO-degrade regression on disposable GitHub Windows.
+# Dedicated R291 native A/B tests exercise the real privileged path boundary.
+# This test mocks only its isolated fixture boundary and PawnIO discovery.
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
+# Never write even a test config to a real owner's user profile.
+if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+   $env:RUNNER_OS -cne 'Windows' -or $env:COMPUTERNAME -match '(?i)EMAD-PC' -or
+   [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)){throw 'R85_ONLY_DISPOSABLE_GITHUB_WINDOWS'}
 $Root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $Helper=Join-Path $Root 'installer\TBME_Setup_Elevated_Helper.ps1'
 $Base=Join-Path $Root 'artifacts\_r85_external_degrade_test'
 $Payload=Join-Path $Base 'payload'
-$App=Join-Path $Base 'local_app'
+$Profile=Join-Path $Base 'isolated-profile'
+$App=Join-Path $Profile 'AppData\Local\TaskbarMonitorEnhanced'
 $Mock=Join-Path $Base 'helper_mocked_pawnio_discovery.ps1'
 $Result=Join-Path $App 'Logs\sensor_install_result.json'
 $Log=Join-Path $App 'Logs\sensor_install.log'
-if(Test-Path -LiteralPath $Base){throw 'R85 UNSAFE FIXTURE REUSE'}
+if(Test-Path -LiteralPath $Base){throw 'R85 GUEST_FIXTURE_COLLISION_NO_USER_DATA_TOUCH'}
 if(!(Test-Path -LiteralPath $Helper -PathType Leaf)){throw 'R85 HELPER MISSING'}
 $source=Get-Content -LiteralPath $Helper -Raw
 $guardAt=$source.IndexOf('PAWNIO_UPSTREAM_EXTERNAL_INSTALL_REQUIRED',[StringComparison]::Ordinal)
-$captureAt=$source.IndexOf('if(-not(Capture-PreviousSensorLayer))',[StringComparison]::Ordinal)
-if($guardAt -lt 0 -or $captureAt -le $guardAt){throw 'R85 EARLY DEGRADED GUARD NOT BEFORE SENSOR MUTATION'}
+# R344 adds a separate *Uninstall-only* PREPARED snapshot before PawnIO
+# discovery. The R85 regression is for Install: bind this static check to
+# the Install-specific capture following the completed Uninstall branch.
+$uninstallBegin=$source.IndexOf('if($Mode -eq ''Uninstall'')',[StringComparison]::Ordinal)
+$uninstallEnd=$source.IndexOf('# R294: one exclusive read',$uninstallBegin,[StringComparison]::Ordinal)
+$captureAt=$source.IndexOf('if(-not(Capture-PreviousSensorLayer))',$uninstallEnd,[StringComparison]::Ordinal)
+if($uninstallBegin -lt 0 -or $uninstallEnd -le $uninstallBegin -or
+   $guardAt -lt $uninstallEnd -or $captureAt -le $guardAt){
+    throw 'R85 INSTALL_DEGRADED_GUARD_NOT_BEFORE_INSTALL_SENSOR_MUTATION'
+}
+if($source.Substring($uninstallBegin,$uninstallEnd-$uninstallBegin).IndexOf(
+    'if(-not(Capture-PreviousSensorLayer))',[StringComparison]::Ordinal) -lt 0){
+    throw 'R85 R344_UNINSTALL_JOURNAL_CAPTURE_MISSING'
+}
 $tok=$null;$errs=$null
 $ast=[Management.Automation.Language.Parser]::ParseInput($source,[ref]$tok,[ref]$errs)
 if($errs.Count -ne 0){throw 'R85 HELPER HAS PARSER ERRORS'}
-$funcs=@($ast.FindAll({param($x) $x -is [Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -ceq 'Get-PawnIOVersion'},$true))
-if($funcs.Count -ne 1){throw 'R85 EXACT FUNCTION REPLACEMENT AMBIGUOUS'}
-$node=$funcs[0]
-$mocked=$source.Substring(0,$node.Extent.StartOffset)+"function Get-PawnIOVersion { return '' }"+$source.Substring($node.Extent.EndOffset)
+$funcs=@($ast.FindAll({param($x)
+    $x -is [Management.Automation.Language.FunctionDefinitionAst] -and
+      $x.Name -in @('Get-PawnIOVersion','Assert-SensorPrivilegedBoundary')
+},$true))
+if($funcs.Count -ne 2 -or @($funcs|Where-Object Name -eq 'Get-PawnIOVersion').Count -ne 1 -or
+   @($funcs|Where-Object Name -eq 'Assert-SensorPrivilegedBoundary').Count -ne 1){
+    throw 'R85_TWO_EXACT_MOCK_FUNCTIONS_REQUIRED'
+}
+$preflight=$source.IndexOf('$validatedSensorSid=Assert-SensorPrivilegedBoundary',[StringComparison]::Ordinal)
+$logWrite=$source.IndexOf('New-Item -ItemType Directory -Force -Path $LogsRoot',[StringComparison]::Ordinal)
+if($preflight -lt 0 -or $logWrite -le $preflight){throw 'R85_UNMODIFIED_PRODUCTION_GUARD_MISSING'}
+$escapeApp=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([IO.Path]::GetFullPath($App)))
+$escapeProfile=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([IO.Path]::GetFullPath($Profile)))
+$escapePayload=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([IO.Path]::GetFullPath($Payload)))
+$escapeUser=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([Security.Principal.WindowsIdentity]::GetCurrent().Name))
+$escapeSid=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([Security.Principal.WindowsIdentity]::GetCurrent().User.Value))
+$mockBoundary=@'
+function Assert-SensorPrivilegedBoundary([string]$RequestedMode,[string]$RequestedPayload,[string]$RequestedAppRoot,[string]$RequestedUser){
+    if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+       $env:RUNNER_OS -cne 'Windows'){throw 'R85_MOCK_ONLY_HOSTED_DISPOSABLE'}
+    $app=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__APP__'))
+    $profile=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__PROFILE__'))
+    $payload=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__PAYLOAD__'))
+    $user=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__USER__'))
+    $sid=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__SID__'))
+    if($RequestedMode -cne 'Install' -or $RequestedUser -cne $user -or
+       -not [string]::Equals([IO.Path]::GetFullPath($RequestedAppRoot),$app,[StringComparison]::OrdinalIgnoreCase) -or
+       -not [string]::Equals($app,[IO.Path]::GetFullPath((Join-Path $profile 'AppData\Local\TaskbarMonitorEnhanced')),[StringComparison]::OrdinalIgnoreCase) -or
+       -not [string]::Equals([IO.Path]::GetFullPath($RequestedPayload),$payload,[StringComparison]::OrdinalIgnoreCase)){
+       throw 'R85_MOCK_REJECTS_OUTSIDE_OWNED_FIXTURE'
+    }
+    $script:ValidatedSensorProfileRoot=$profile
+    return $sid
+}
+'@
+$mockBoundary=$mockBoundary.Replace('__APP__',$escapeApp).Replace('__PROFILE__',$escapeProfile).Replace('__PAYLOAD__',$escapePayload).Replace('__USER__',$escapeUser).Replace('__SID__',$escapeSid)
+$mocked=$source
+foreach($fn in @($funcs|Sort-Object {$_.Extent.StartOffset} -Descending)){
+    $replacement=if($fn.Name -ceq 'Get-PawnIOVersion'){"function Get-PawnIOVersion { return '' }"}else{$mockBoundary}
+    $mocked=$mocked.Substring(0,$fn.Extent.StartOffset)+$replacement+$mocked.Substring($fn.Extent.EndOffset)
+}
+if(-not $mocked.Contains('R85_MOCK_REJECTS_OUTSIDE_OWNED_FIXTURE')){throw 'R85_BOUNDARY_MOCK_INJECTION_FAILED'}
 $done=$false
 try {
     New-Item -ItemType Directory -Path $Payload -Force -ErrorAction Stop|Out-Null
@@ -50,19 +105,19 @@ try {
     $files=@(Get-ChildItem -LiteralPath $Base -Recurse -File)
     $allowed=@(
       'payload\TaskbarMonitorSensorBroker.exe','payload\TaskbarMonitorSensorSupervisor.exe',
-      'local_app\SensorBackend\LibreHardwareMonitor-0.9.6\LibreHardwareMonitorLib.dll',
-      'local_app\Logs\sensor_install_result.json','local_app\Logs\sensor_install.log',
+      'isolated-profile\AppData\Local\TaskbarMonitorEnhanced\SensorBackend\LibreHardwareMonitor-0.9.6\LibreHardwareMonitorLib.dll',
+      'isolated-profile\AppData\Local\TaskbarMonitorEnhanced\Logs\sensor_install_result.json','isolated-profile\AppData\Local\TaskbarMonitorEnhanced\Logs\sensor_install.log',
       'helper_mocked_pawnio_discovery.ps1')
-    if($files.Count -ne $allowed.Count -or @($files|Where-Object {$_.FullName.Substring($Base.Length+1) -notin $allowed}).Count -ne 0){throw 'R85 UNKNOWN FIXTURE FILES'}
+    if($files.Count -ne $allowed.Count -or @($files|Where-Object {$_.FullName.Substring($Base.Length+1) -notin $allowed}).Count -ne 0){throw 'R85_UNKNOWN_FIXTURE_FILES'}
     Write-Output 'R85_MISSING_PAWNIO_DEGRADED_FAIL_CLOSED_NO_DRIVER_INSTALL_NO_ROLLBACK_NO_OS_CHANGE=PASS'
     $done=$true
 } finally {
     if($done){
-        # Only this preflight-owned, exact-path fixture tree is removed.
+        # Delete only this initially absent, owned fixture; never touch user AppData.
         Remove-Item -LiteralPath $Base -Recurse -Force -ErrorAction Stop
-        if(Test-Path -LiteralPath $Base){throw 'R85 FIXTURE CLEANUP FAILED'}
+        if(Test-Path -LiteralPath $Base){throw 'R85_FIXTURE_CLEANUP_FAILED'}
     }else{
-        Write-Warning ('R85 TEST FAILED; exact diagnostic fixture preserved at '+$Base)
+        Write-Warning ('R85 GUEST FAILURE: owned fixture preserved at '+$Base)
     }
 }
 exit 0

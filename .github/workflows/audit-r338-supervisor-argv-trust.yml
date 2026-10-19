@@ -1,0 +1,87 @@
+name: R338 Supervisor trusted argv binding (disposable Windows)
+on:
+  push:
+    branches: [audit/r338-supervisor-argv-trust]
+    paths:
+      - src/sensors/TaskbarMonitorSensorSupervisor.cs
+      - build/Test-R338-SupervisorTrustedArgs-Native.ps1
+      - .github/workflows/audit-r338-supervisor-argv-trust.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  native-argv-contract:
+    name: R338 ${{ matrix.variant }} ${{ matrix.host }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline, candidate]
+        host: [A, B]
+        include:
+          - host: A
+            os: windows-2025
+          - host: B
+            os: windows-2022
+    steps:
+      - name: Checkout exact test harness revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: harness
+          persist-credentials: false
+      - name: Checkout exact baseline or candidate product source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.variant == 'baseline' && '997c6f349fa64cfe6385113a9ede46d35479cc7a' || github.sha }}
+          path: src
+          persist-credentials: false
+      - name: Require disposable Windows exact source and no preexisting product
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $expected="${{ matrix.variant == 'baseline' && '997c6f349fa64cfe6385113a9ede46d35479cc7a' || github.sha }}"
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or $env:COMPUTERNAME -match '(?i)EMAD-PC|ALIEMAD|SAEID' -or
+             (git -C src rev-parse HEAD).Trim() -cne $expected -or
+             (git -C harness rev-parse HEAD).Trim() -cne '${{ github.sha }}'){
+            throw 'R338_NOT_PINNED_DISPOSABLE_WINDOWS'
+          }
+          $actual=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TaskbarMonitorEnhanced'
+          if(Test-Path -LiteralPath $actual){throw 'R338_HOSTED_EXISTING_LIVE_INSTALL_REFUSE'}
+          'R338_RUNNER_DISPOSABLE_AND_SOURCE_BOUND='+$expected
+      - name: Install pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.400
+      - name: Compile actual supervisor and all bundled .NET Framework projects
+        shell: pwsh
+        working-directory: src
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Build.ps1
+          if($LASTEXITCODE -ne 0 -or
+             !(Test-Path -LiteralPath build/_out/Supervisor/TaskbarMonitorSensorSupervisor.exe -PathType Leaf)){
+            throw 'R338_EXACT_COMPILED_SUPERVISOR_MISSING'
+          }
+          'R338_SUPERVISOR_AND_PRODUCT_FULL_BUILD_PASS'
+      - name: Execute original compiled PE parser and native junction negatives (no launch)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $ps=Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+          $test=(Resolve-Path harness/build/Test-R338-SupervisorTrustedArgs-Native.ps1).Path
+          $source=(Resolve-Path src).Path
+          $exe=(Resolve-Path src/build/_out/Supervisor/TaskbarMonitorSensorSupervisor.exe).Path
+          & $ps -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $test -HostedGuest -HostLabel '${{ matrix.host }}' -Variant '${{ matrix.variant }}' -SourceRoot $source -SupervisorPath $exe
+          if($LASTEXITCODE -ne 0){throw 'R338_SUPERVISOR_ARG_PATH_NATIVE_GUEST_NOT_ACCEPTED'}
+      - name: Retain raw typed guest receipt without security alert upload
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R338-${{ matrix.variant }}-${{ matrix.host }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/R338_*/R338_SUPERVISOR_ARG_TRUST.json
+          retention-days: 7
+          if-no-files-found: warn

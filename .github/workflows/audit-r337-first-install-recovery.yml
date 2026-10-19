@@ -1,0 +1,87 @@
+name: R337 first-sensor-install cold recovery differential (disposable)
+on:
+  push:
+    branches: [audit/r337-orphan-broker-recovery]
+    paths:
+      - installer/TBME_Setup_Elevated_Helper.ps1
+      - build/Test-R337-FirstInstallColdOrphan-Native.ps1
+      - .github/workflows/audit-r337-first-install-recovery.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  first-install-cold-recovery:
+    name: R337 ${{ matrix.variant }} ${{ matrix.host }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline, candidate]
+        host: [A, B]
+        include:
+          - host: A
+            os: windows-2025
+          - host: B
+            os: windows-2022
+    steps:
+      - name: Checkout exact test harness branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: harness
+          persist-credentials: false
+      - name: Checkout exact prior source or current candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.variant == 'baseline' && 'fa57ae2c89304974f4b91d5a9ca7c3d5b06f57e1' || github.sha }}
+          path: src
+          persist-credentials: false
+      - name: Require hosted Windows and exact pinned source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $expected="${{ matrix.variant == 'baseline' && 'fa57ae2c89304974f4b91d5a9ca7c3d5b06f57e1' || github.sha }}"
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or $env:COMPUTERNAME -match '(?i)EMAD-PC' -or
+             (git -C src rev-parse HEAD).Trim() -cne $expected -or
+             (git -C harness rev-parse HEAD).Trim() -cne '${{ github.sha }}'){
+            throw 'R337_NON_DISPOSABLE_OR_WRONG_CHECKOUT_REF'
+          }
+          if((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System').ConsentPromptBehaviorAdmin -ne 0){
+            'R337_UAC_POLICY_NOT_ZERO_DO_NOT_ASSUME_INTERACTIVE_UAC_TESTED'
+          }
+          'R337_SOURCE='+$expected
+      - name: Install pinned SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.400
+      - name: Compile exact source with embedded real Windows PowerShell Helper
+        shell: pwsh
+        working-directory: src
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Build.ps1
+          if($LASTEXITCODE -ne 0){throw 'R337_SOURCE_COMPILATION_FAILED'}
+          if(!(Test-Path -LiteralPath build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe)){
+            throw 'R337_EXACT_SETUP_EXE_MISSING'
+          }
+      - name: Execute sandboxed PS5.1 first-install cold replay differential
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $native=Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+          $test=(Resolve-Path harness/build/Test-R337-FirstInstallColdOrphan-Native.ps1).Path
+          $product=(Resolve-Path src).Path
+          $setup=(Resolve-Path src/build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe).Path
+          & $native -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $test -HostLabel '${{ matrix.host }}' -Variant '${{ matrix.variant }}' -ProductRoot $product -SetupPath $setup
+          if($LASTEXITCODE -ne 0){throw 'R337_HOSTED_NATIVE_COLD_RECOVERY_NEGATIVE_OR_REGRESSION'}
+      - name: Retain typed test evidence without public security alert upload
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R337-${{ matrix.variant }}-${{ matrix.host }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/R337_*/R337_FIRST_INSTALL_COLD_RECOVERY.json
+          retention-days: 7
+          if-no-files-found: warn
