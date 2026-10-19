@@ -997,6 +997,90 @@ namespace TaskbarMonitorEnhanced
             return info;
         }
 
+        // R355: repair uses the immutable *current* official release. Do
+        // not elevate an AppData\Uninstall.exe copied during installation:
+        // user-owned app files are replaceable after Setup has exited.
+        // Keep JSON parsing pure so untrusted release metadata is tested
+        // with deterministic hostile fixtures and no network/UAC calls.
+        internal static ReleaseUpdateInfo ParseCurrentRepairReleaseMetadata(string json)
+        {
+            if(String.IsNullOrWhiteSpace(json)||json.Length>3145728)
+                throw new InvalidDataException("Current repair release metadata is unavailable or too large.");
+            string version=BuildInfo.PublicVersion;
+            if(!Regex.IsMatch(version,@"^\d+\.\d+\.\d+$",RegexOptions.CultureInvariant))
+                throw new InvalidDataException("Current release version is not canonical.");
+            Dictionary<string,object> root=new JavaScriptSerializer().DeserializeObject(json) as Dictionary<string,object>;
+            if(root==null)throw new InvalidDataException("Current release metadata is not an object.");
+            ReleaseUpdateInfo info=new ReleaseUpdateInfo();
+            info.Version=version;
+            info.Tag=Text(root,"tag_name");
+            info.Name=Text(root,"name");
+            info.HtmlUrl=Text(root,"html_url");
+            info.PublishedAt=Text(root,"published_at");
+            object immutable,draft,prerelease;
+            info.Immutable=root.TryGetValue("immutable",out immutable)&&immutable is bool&&(bool)immutable;
+            if(!info.Immutable||
+               !root.TryGetValue("draft",out draft)||!(draft is bool)||(bool)draft||
+               !root.TryGetValue("prerelease",out prerelease)||!(prerelease is bool)||(bool)prerelease)
+                throw new InvalidDataException("Current repair release is not immutable and stable.");
+            info.TagValid=String.Equals(info.Tag,"v"+version,StringComparison.Ordinal);
+            info.ReleaseUrlValid=IsOfficialReleaseUrl(info.HtmlUrl,version);
+            Uri page;
+            if(!info.TagValid||!info.ReleaseUrlValid||
+               !Uri.TryCreate(info.HtmlUrl,UriKind.Absolute,out page)||
+               page.UserInfo.Length>0||!page.IsDefaultPort||page.Query.Length>0||page.Fragment.Length>0)
+                throw new InvalidDataException("Current repair release identity is not canonical.");
+            object rawAssets;
+            System.Collections.IEnumerable assets=root.TryGetValue("assets",out rawAssets)?
+                rawAssets as System.Collections.IEnumerable:null;
+            if(assets==null||assets is string)throw new InvalidDataException("Current release assets are unavailable.");
+            string expectedName=ExpectedSetupAssetName(version);
+            Dictionary<string,object> chosen=null;
+            foreach(object entry in assets)
+            {
+                Dictionary<string,object> asset=entry as Dictionary<string,object>;
+                if(asset==null)throw new InvalidDataException("Current release asset record is invalid.");
+                if(!String.Equals(Text(asset,"name"),expectedName,StringComparison.Ordinal))continue;
+                if(chosen!=null)throw new InvalidDataException("Duplicate canonical repair installer assets.");
+                chosen=asset;
+            }
+            if(chosen==null)throw new InvalidDataException("Exact current repair installer asset is absent.");
+            info.SetupName=Text(chosen,"name");
+            info.SetupUrl=Text(chosen,"browser_download_url");
+            info.SetupDigest=Text(chosen,"digest");
+            object rawSize;
+            long size;
+            try{
+                if(!chosen.TryGetValue("size",out rawSize)||rawSize==null||
+                   rawSize is string||rawSize is bool)
+                    throw new InvalidDataException("Current repair asset length is not numeric.");
+                size=Convert.ToInt64(rawSize,CultureInfo.InvariantCulture);
+            }catch(Exception ex){throw new InvalidDataException("Current repair asset length is invalid.",ex);}
+            info.SetupAssetAvailable=size>=1024&&size<=536870912;
+            info.DigestAvailable=IsStrictSha256Digest(info.SetupDigest);
+            info.SetupUrlValid=IsOfficialSetupUrl(info.SetupUrl,version,expectedName);
+            Uri download;
+            if(!Uri.TryCreate(info.SetupUrl,UriKind.Absolute,out download)||
+               download.UserInfo.Length>0||!download.IsDefaultPort||
+               download.Query.Length>0||download.Fragment.Length>0||
+               !info.SetupAssetAvailable||!info.DigestAvailable||!info.SetupUrlValid)
+                throw new InvalidDataException("Current repair installer is not a canonical SHA-pinned GitHub asset.");
+            info.HasUpdate=false;
+            info.Status="Canonical immutable current-version repair asset verified.";
+            return info;
+        }
+
+        public static ReleaseUpdateInfo CheckCurrentReleaseForRepair()
+        {
+            string version=BuildInfo.PublicVersion;
+            if(!Regex.IsMatch(version,@"^\d+\.\d+\.\d+$",RegexOptions.CultureInvariant))
+                throw new InvalidDataException("Current repair version is not canonical.");
+            string endpoint="https://api.github.com/repos/GOD13emad/TaskbarMonitorEnhanced/releases/tags/v"+version;
+            string response;
+            using(WebClient wc=Client())response=wc.DownloadString(endpoint);
+            return ParseCurrentRepairReleaseMetadata(response);
+        }
+
         private static string Sha256File(string path)
         {
             using(SHA256 sha=SHA256.Create())using(FileStream fs=File.OpenRead(path)){byte[] b=sha.ComputeHash(fs);StringBuilder sb=new StringBuilder();foreach(byte x in b)sb.Append(x.ToString("X2",CultureInfo.InvariantCulture));return sb.ToString();}
@@ -1004,7 +1088,22 @@ namespace TaskbarMonitorEnhanced
 
         public static string DownloadAndVerify(ReleaseUpdateInfo info)
         {
-            if(info==null||!info.HasUpdate)throw new InvalidOperationException("No newer public release is selected.");
+            return DownloadAndVerifyStrict(info,false);
+        }
+
+        internal static string DownloadAndVerifyForRepair(ReleaseUpdateInfo info)
+        {
+            if(info==null||info.HasUpdate||
+               !String.Equals(info.Version,BuildInfo.PublicVersion,StringComparison.Ordinal)||
+               !String.Equals(info.Tag,"v"+BuildInfo.PublicVersion,StringComparison.Ordinal))
+                throw new InvalidDataException("Repair would install a different or unverified release version.");
+            return DownloadAndVerifyStrict(info,true);
+        }
+
+        private static string DownloadAndVerifyStrict(ReleaseUpdateInfo info,bool allowSameVersionRepair)
+        {
+            if(info==null||(!info.HasUpdate&&!allowSameVersionRepair))
+                throw new InvalidOperationException("No approved public release is selected.");
             string expectedName=ExpectedSetupAssetName(info.Version);
             if(!info.SetupAssetAvailable||!String.Equals(info.SetupName,expectedName,StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Automatic installation is blocked because the release does not contain the exact expected installer asset "+expectedName+".");
@@ -1103,6 +1202,17 @@ namespace TaskbarMonitorEnhanced
             psi.FileName=file;
             psi.Arguments=String.Empty;
             psi.UseShellExecute=true;
+            psi.ErrorDialog=false;
+            return psi;
+        }
+
+        internal static ProcessStartInfo BuildPinnedRepairProcessInfo(FileStream pinned,string expectedUpdatesRoot)
+        {
+            ProcessStartInfo psi=BuildPinnedUpdateInstallerProcessInfo(pinned,expectedUpdatesRoot);
+            if(!psi.UseShellExecute||!String.IsNullOrEmpty(psi.Arguments))
+                throw new InvalidDataException("Repair installer descriptor is not pinned.");
+            psi.Arguments="/repair-sensors";
+            psi.Verb="runas";
             psi.ErrorDialog=false;
             return psi;
         }
@@ -8048,26 +8158,59 @@ namespace TaskbarMonitorEnhanced
 
         private void RepairProtectedSensors()
         {
-            try
+            if(MessageBox.Show(
+                "Repair the protected CPU/GPU/storage sensor layer with the exact immutable "+
+                "official "+BuildInfo.PublicVersion+" Setup from GitHub? "+
+                "The installer SHA-256 will be verified immediately before Windows asks for administrator approval.",
+                "Repair protected sensors",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;
+            if(repairSensors!=null){repairSensors.Enabled=false;repairSensors.Text="Verifying official Setup...";}
+            ThreadPool.QueueUserWorkItem(delegate
             {
-                string setup=Path.Combine(AppPaths.Root,"Uninstall.exe");
-                if(!File.Exists(setup))
+                try
                 {
-                    MessageBox.Show("Repair tool was not found. Re-run the latest Taskbar Monitor Enhanced installer.","Repair protected sensors",MessageBoxButtons.OK,MessageBoxIcon.Warning);
-                    return;
+                    ReleaseUpdateInfo release=UpdateManager.CheckCurrentReleaseForRepair();
+                    string verifiedPath=UpdateManager.DownloadAndVerifyForRepair(release);
+                    Ui(delegate
+                    {
+                        try
+                        {
+                            using(FileStream pinned=UpdateManager.OpenPinnedVerifiedUpdateInstaller(
+                                verifiedPath,release.SetupDigest,AppPaths.Updates))
+                            {
+                                ProcessStartInfo psi=UpdateManager.BuildPinnedRepairProcessInfo(pinned,AppPaths.Updates);
+                                using(Process child=Process.Start(psi))
+                                {
+                                    if(child==null)throw new InvalidOperationException("Verified official repair Setup did not launch.");
+                                }
+                                Log.Write("INFO","SENSOR_REPAIR_STARTED immutableVersion="+release.Version+
+                                    " pinnedDigest="+release.SetupDigest);
+                            }
+                        }
+                        catch(Exception ex)
+                        {
+                            Log.Write("WARN","SENSOR_REPAIR_START_FAIL "+ex.Message);
+                            MessageBox.Show("Trusted sensor repair could not start: "+ex.Message+
+                                "\r\nNo local Uninstall.exe was elevated. Use the official immutable GitHub release if repair is needed.",
+                                "Repair protected sensors",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+                        }
+                        finally
+                        {
+                            if(repairSensors!=null){repairSensors.Enabled=true;repairSensors.Text="Repair protected sensors...";}
+                        }
+                    });
                 }
-                if(MessageBox.Show("Repair the protected CPU/GPU/storage sensor layer? Windows will request administrator approval.","Repair protected sensors",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;
-                ProcessStartInfo psi=new ProcessStartInfo();
-                psi.FileName=setup;psi.Arguments="/repair-sensors";psi.UseShellExecute=true;psi.Verb="runas";
-                Process x=Process.Start(psi);
-                if(x==null)throw new InvalidOperationException("Windows did not start the sensor repair tool.");
-                Log.Write("INFO","SENSOR_REPAIR_STARTED");
-            }
-            catch(Exception ex)
-            {
-                Log.Write("WARN","SENSOR_REPAIR_START_FAIL "+ex.Message);
-                MessageBox.Show(ex.Message,"Repair protected sensors",MessageBoxButtons.OK,MessageBoxIcon.Warning);
-            }
+                catch(Exception ex)
+                {
+                    Log.Write("WARN","SENSOR_REPAIR_RELEASE_VERIFY_FAIL "+ex.Message);
+                    Ui(delegate
+                    {
+                        MessageBox.Show("Verified current-version repair Setup is unavailable: "+ex.Message+
+                            "\r\nNo local Uninstall.exe was elevated. Check the official GitHub release page.",
+                            "Repair protected sensors",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+                        if(repairSensors!=null){repairSensors.Enabled=true;repairSensors.Text="Repair protected sensors...";}
+                    });
+                }
+            });
         }
 
         private List<HardwareChoice> ChoicesCpu(){return snapshot.CpuDevices.Select(x=>new HardwareChoice{Id=x.Id,Name=x.Name}).ToList();}

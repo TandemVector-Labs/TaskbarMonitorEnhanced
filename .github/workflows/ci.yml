@@ -81,6 +81,11 @@ jobs:
         run: |
           & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R353-PinnedUpdateInstaller-Native.ps1
           if ($LASTEXITCODE -ne 0) { throw 'R353 SHA-pinned update installer native negative gate failed.' }
+      - name: R355 exact immutable official repair metadata and no untrusted elevation
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R355-ImmutableRepairRelease-Native.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'R355 immutable current-version release and safe repair native contract failed.' }
       - name: R322 embedded backend ZIP archive/hostile entries (native .NET Framework)
         shell: pwsh
         run: |

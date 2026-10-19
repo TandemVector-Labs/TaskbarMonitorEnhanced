@@ -134,6 +134,18 @@ try {
     $launchPin=Pin $probe $probeSha $updates
     $launchArgs=[object[]]@($launchPin,[string]$updates)
     $startInfo=[Diagnostics.ProcessStartInfo]$buildMethod.Invoke($null,$launchArgs)
+    # R355: reflection only. Never execute a test fixture with runas/UAC.
+    $repairMethod=$type.GetMethod('BuildPinnedRepairProcessInfo',$flags)
+    if(!$repairMethod){throw 'R355_REPAIR_PROCESS_FACTORY_MISSING_FROM_CURRENT_PE'}
+    $repairDescriptor=[Diagnostics.ProcessStartInfo]$repairMethod.Invoke($null,$launchArgs)
+    if($repairDescriptor.FileName -cne $probe -or
+       $repairDescriptor.Arguments -cne '/repair-sensors' -or
+       $repairDescriptor.Verb -cne 'runas' -or
+       !$repairDescriptor.UseShellExecute -or
+       $repairDescriptor.ErrorDialog -ne $false){
+        throw 'R355_REPAIR_DESCRIPTOR_NOT_BOUND_TO_SHA_PINNED_CURRENT_SETUP'
+    }
+    Pass 'REPAIR_RUNAS_DESCRIPTOR_SHA_PINNED_NO_UAC_TEST_EXECUTION'
     if($startInfo.FileName -cne $probe -or
        $startInfo.UseShellExecute -ne $true -or
        $startInfo.Arguments -cne ''){
@@ -172,5 +184,5 @@ foreach($ownedFile in @($file,$other,$unsafe,$canary,$probe)){
 [IO.Directory]::Delete($foreign,$false)
 [IO.Directory]::Delete($fixture,$false)
 Pass 'TEST_OWNED_RUNNER_TEMP_FIXTURE_REMOVED'
-if($checks.Count -ne 13){throw ('R353_CHECK_COUNT_MISMATCH_'+$checks.Count)}
-'R353_AND_R354_SHA_PINNED_UPDATE_LAUNCH_NATIVE_PASS=13/13'
+if($checks.Count -ne 14){throw ('R353_CHECK_COUNT_MISMATCH_'+$checks.Count)}
+'R353_R354_R355_PINNED_UPDATE_LAUNCH_NATIVE_PASS=14/14'
