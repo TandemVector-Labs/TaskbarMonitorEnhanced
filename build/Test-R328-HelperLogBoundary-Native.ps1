@@ -30,7 +30,7 @@ if(@($parseErrors).Count -ne 0){throw 'R328_TRUSTED_HELPER_AST_PARSE_ERRORS'}
 $native=[regex]::Matches($source,'(?s)Add-Type -TypeDefinition @''\r?\n(.*?)\r?\n''@')
 if($native.Count -ne 1){throw 'R335_NATIVE_CLASS_SOURCE_NOT_UNIQUE'}
 Add-Type -TypeDefinition $native[0].Groups[1].Value
-if($null -eq ('TBMEScopedUserLogLease' -as [type])){throw 'R335_EXPECTED_PRODUCTION_CLASS_NOT_COMPILED'}
+if($null -eq ('TBMEProtectedBrokerLease' -as [type]) -or $null -ne ('TBMEScopedUserLogLease' -as [type])){throw 'R328_PRIVILEGED_NATIVE_CLASS_SCOPE_NOT_IPC_ONLY'}
 foreach($fn in @('Assert-SensorBoundaryNoReparse','Assert-SensorUserLogSink','Write-Log','Write-Result')){
     $definition=@($ast.FindAll({param($x) $x -is [Management.Automation.Language.FunctionDefinitionAst]},$true)|
         Where-Object Name -EQ $fn)

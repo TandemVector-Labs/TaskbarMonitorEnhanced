@@ -135,11 +135,11 @@ jobs:
           & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R334-CommandSinkContracts-Native.ps1
           if ($LASTEXITCODE -ne 0) { throw 'R334 no-UAC three-process-command-sink adversarial contract regression failed.' }
 
-      - name: R335 privileged user log/result sink pinned handle boundary (native)
+      - name: R335 privileged IPC-only status and no-user-file writes (native)
         shell: pwsh
         run: |
           & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R335-AtomicUserLogSink-Native.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'R335 compiled privileged Helper scoped handle guard regressions failed.' }
+          if ($LASTEXITCODE -ne 0) { throw 'R335 current compiled privileged IPC-only Helper boundary regressions failed.' }
 
       - name: R080 Windows 5.1 exact embedded Helper/status IPC without UAC
         shell: powershell
@@ -512,7 +512,7 @@ jobs:
           retention-days: 7
           path: ${{ runner.temp }}/R334_${{ matrix.host }}_${{ github.run_id }}/R334_COMMAND_SINK_TRUST_RECEIPT.json
 
-      - name: R335 real Setup embeds exact native no-reparse handle guard on guest ${{ matrix.host }}
+      - name: R335 real Setup enforces IPC-only privileged boundary on guest ${{ matrix.host }}
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -530,14 +530,16 @@ jobs:
              throw 'R335_PRIVATE_SETUP_NOT_BUILD_MANIFEST_PINNED'
           }
           & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R335-AtomicUserLogSink-Native.ps1 -SetupPath $setup[0].FullName -HostedGuest -HostLabel '${{ matrix.host }}'
-          if($LASTEXITCODE -ne 0){throw 'R335_REAL_PRIVATE_SETUP_HANDLE_GUEST_FAILED'}
-          $receipt=Join-Path $env:RUNNER_TEMP ('R335_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R335_ATOMIC_LOG_HANDLE_PROBE.json')
+          if($LASTEXITCODE -ne 0){throw 'R335_REAL_PRIVATE_SETUP_IPC_BOUNDARY_GUEST_FAILED'}
+          $receipt=Join-Path $env:RUNNER_TEMP ('R335_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R335_PRIVILEGED_IPC_BOUNDARY.json')
           if(!(Test-Path $receipt -PathType Leaf)){throw 'R335_EXACT_TYPED_GUEST_RECEIPT_MISSING'}
           $r=Get-Content $receipt -Raw|ConvertFrom-Json
-          if($r.Schema -ne 1 -or $r.Revision -cne 'R335' -or $r.Host -cne '${{ matrix.host }}' -or
+          if($r.Schema -ne 2 -or $r.Revision -cne 'R335-IPC' -or $r.Host -cne '${{ matrix.host }}' -or
              $r.SourceCommit -cne $env:GITHUB_SHA -or
-             $r.Status -cne 'PASS_SCOPED_NONDELETE_HANDLE_LOGS_APPROOT_AND_FILE' -or
-             @($r.Checks).Count -ne 23 -or
+             $r.Status -cne 'PASS_CURRENT_PRIVILEGED_IPC_ONLY_NATIVE' -or
+             @($r.Checks).Count -ne 14 -or
+             $r.PrivilegedUserLogLeasePresent -ne $false -or
+             $r.AsInvokerStatusPersistencePresent -ne $true -or
              $r.RealElevatedHelperLaunched -ne $false -or
              $r.ActualProgramFilesModified -ne $false -or
              $r.AtomicCrossUserUacProven -ne $false -or
@@ -545,13 +547,13 @@ jobs:
              $r.SecurityFinalAccepted -ne $false){
              throw 'R335_HOSTED_GUEST_RECEIPT_CONTRACT_FAILED'
           }
-      - name: Preserve bounded R335 native user-log-handle proof
+      - name: Preserve bounded R335 privileged IPC boundary proof
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: R335-user-log-handle-${{ matrix.host }}-${{ github.sha }}
+          name: R335-ipc-only-boundary-${{ matrix.host }}-${{ github.sha }}
           retention-days: 7
           if-no-files-found: error
-          path: ${{ runner.temp }}/R335_${{ matrix.host }}_${{ github.run_id }}/R335_ATOMIC_LOG_HANDLE_PROBE.json
+          path: ${{ runner.temp }}/R335_${{ matrix.host }}_${{ github.run_id }}/R335_PRIVILEGED_IPC_BOUNDARY.json
 
       - name: Preserve bounded raw hosted negative receipt
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
