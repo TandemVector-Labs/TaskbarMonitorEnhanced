@@ -71,6 +71,11 @@ jobs:
         run: |
           & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R351-TrustedSchtasks-Native.ps1
           if ($LASTEXITCODE -ne 0) { throw 'R351 pinned Windows Task Scheduler command security regression failed.' }
+      - name: R352 pin explorer and Task Manager to Windows executable roots
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R352-PinnedWindowsUiTools-Native.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'R352 fixed OS UI tools / hostile PATH native regression failed.' }
       - name: R322 embedded backend ZIP archive/hostile entries (native .NET Framework)
         shell: pwsh
         run: |
