@@ -846,13 +846,38 @@ internal static partial class SetupProgram
                 "Taskbar Monitor Enhanced Startup Recovery.lnk"));
     }
 
+    // R091: system Unicode IShellLinkW; never stage or execute a user-writable
+    // PowerShell script just to create a shortcut. No PATH command lookup,
+    // ExecutionPolicy Bypass, COM WScript.Shell ANSI filename fallback or UAC.
+    [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface ShortcutShellLinkW {
+      void GetPath([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder path,int n,IntPtr findData,uint flags);
+      void GetIDList(out IntPtr ppidl);
+      void SetIDList(IntPtr pidl);
+      void GetDescription([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder description,int len);
+      void SetDescription([MarshalAs(UnmanagedType.LPWStr)]string desc);
+      void GetWorkingDirectory([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder dir,int len);
+      void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)]string dir);
+      void GetArguments([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder args,int len);
+      void SetArguments([MarshalAs(UnmanagedType.LPWStr)]string args);
+      void GetHotkey(out short hotkey);
+      void SetHotkey(short hotkey);
+      void GetShowCmd(out int style);
+      void SetShowCmd(int style);
+      void GetIconLocation([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder path,int len,out int index);
+      void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)]string path,int index);
+      void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)]string path,uint reserved);
+      void Resolve(IntPtr hwnd,uint flags);
+      void SetPath([MarshalAs(UnmanagedType.LPWStr)]string path);
+    }
+
     static void Shortcut(string path,string target)
     {
         Shortcut(path,target,"","Live system monitor integrated into the Windows taskbar");
     }
 
-    // R318: WScript.Shell COM is invoked directly inside the Setup PE.
-    // Never generate or execute writable Temp scripts to create shortcuts.
+    // R318/R091: create shortcuts with the system Unicode ShellLink COM API.
+    // Do not execute a writable Temp script or resolve a PowerShell binary via PATH.
     static void Shortcut(string path,string target,string arguments,string description)
     {
         if(String.IsNullOrWhiteSpace(path) || String.IsNullOrWhiteSpace(target) ||
@@ -870,37 +895,31 @@ internal static partial class SetupProgram
             throw new IOException("Shortcut destination is a reparse point.");
         // Refuse an unexpected same-name shortcut before COM Save can overwrite it.
         AssertOwnedOrAbsentShortcut(linkPath,targetPath,arguments);
-        Type shellType=Type.GetTypeFromProgID("WScript.Shell",true);
-        object shell=null;
-        object shortcut=null;
+        object com=null;
         try
         {
-            shell=Activator.CreateInstance(shellType);
-            shortcut=shell.GetType().InvokeMember("CreateShortcut",
-                BindingFlags.InvokeMethod,null,shell,new object[]{linkPath});
-            if(shortcut==null)
-                throw new InvalidOperationException("Windows Script Host did not create a shortcut object.");
-            Type shortcutType=shortcut.GetType();
-            BindingFlags set=BindingFlags.SetProperty;
-            shortcutType.InvokeMember("TargetPath",set,null,shortcut,new object[]{targetPath});
-            shortcutType.InvokeMember("Arguments",set,null,shortcut,new object[]{arguments??""});
-            shortcutType.InvokeMember("WorkingDirectory",set,null,shortcut,new object[]{AppRoot});
-            shortcutType.InvokeMember("IconLocation",set,null,shortcut,new object[]{AppExe+",0"});
-            shortcutType.InvokeMember("Description",set,null,shortcut,new object[]{description??""});
-            shortcutType.InvokeMember("WindowStyle",set,null,shortcut,new object[]{1});
-            // Recheck immediately before COM Save: fail closed if another
-            // same-name shortcut appeared while its object was prepared.
+            // System-registered Windows ShellLink COM CLSID; use the Unicode
+            // IUnknown vtable, not WScript.Shell's legacy path handling.
+            Type clsid=Type.GetTypeFromCLSID(
+                new Guid("00021401-0000-0000-C000-000000000046"),true);
+            com=Activator.CreateInstance(clsid);
+            ShortcutShellLinkW link=(ShortcutShellLinkW)com;
+            link.SetPath(targetPath);
+            link.SetArguments(arguments??"");
+            link.SetWorkingDirectory(AppRoot);
+            link.SetDescription(description??"");
+            link.SetIconLocation(AppExe,0);
+            link.SetShowCmd(1);
+            // R324/R333: foreign, dangling and occupied destinations fail closed.
+            // This is same-user protection, not a guarantee against atomic rename races.
             AssertOwnedOrAbsentShortcut(linkPath,targetPath,arguments);
-            shortcutType.InvokeMember("Save",BindingFlags.InvokeMethod,null,shortcut,new object[0]);
-            if(!File.Exists(linkPath))
-                throw new IOException("Windows Script Host did not persist the shortcut.");
+            ((System.Runtime.InteropServices.ComTypes.IPersistFile)com).Save(linkPath,true);
+            if(!File.Exists(linkPath))throw new IOException("Shortcut creation failed.");
         }
         finally
         {
-            if(shortcut!=null && System.Runtime.InteropServices.Marshal.IsComObject(shortcut))
-                System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut);
-            if(shell!=null && System.Runtime.InteropServices.Marshal.IsComObject(shell))
-                System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell);
+            if(com!=null && Marshal.IsComObject(com))
+                Marshal.FinalReleaseComObject(com);
         }
     }
 

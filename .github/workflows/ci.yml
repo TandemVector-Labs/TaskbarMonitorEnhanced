@@ -164,6 +164,13 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           ./build/Test-R090-NamedPipeCrossSid-Native.ps1 -AssemblyPath (Resolve-Path 'build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe').Path
+
+      - name: R091 direct Unicode Shell Link without temp PowerShell (no UAC)
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Test-R091-ShortcutShellLink-Native.ps1 -AssemblyPath (Resolve-Path 'build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe').Path
+
       - name: Verify deterministic clean-clone build
         shell: pwsh
         run: ./build/Verify-Determinism.ps1
