@@ -1,0 +1,84 @@
+name: QA R349 combined-head privileged leaf native proof (disposable Windows)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  native-leaf:
+    name: R349 combined native leaf lock ${{ matrix.host }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: A
+            os: windows-2025
+          - host: B
+            os: windows-2022
+    steps:
+      - name: Check out exact reviewed candidate without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify fresh hosted Windows with existing administrative token only
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or
+             $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch' -or
+             $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or
+             $env:GITHUB_REPOSITORY -cne 'Usefull-Skills/TaskbarMonitorEnhanced' -or
+             $env:GITHUB_REF -cne 'refs/heads/qa/r349-r093-r091-integration-20261019' -or
+             $env:COMPUTERNAME -match '(?i)EMAD-PC|ALIEMAD|SAEID|LAPTOP' -or
+             (git rev-parse HEAD).Trim() -cne '${{ github.sha }}'){
+            throw 'QA_R349_UNEXPECTED_ACCOUNT_HOST_BRANCH_OR_COMMIT'
+          }
+          $admin=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+          if(!$admin.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
+            throw 'QA_R349_NO_EXISTING_ADMIN_TOKEN'
+          }
+          $product=Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'TaskbarMonitorEnhanced'
+          $app=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TaskbarMonitorEnhanced'
+          if((Test-Path -LiteralPath $product) -or
+             (Test-Path -LiteralPath (Join-Path $app 'TaskbarMonitorEnhanced.exe')) -or
+             @(Get-ScheduledTask -TaskName 'TaskbarMonitorEnhanced Sensor Broker' -TaskPath '\' -ErrorAction SilentlyContinue |
+               Where-Object {$null -ne $_}).Count){
+            throw 'QA_R349_HOST_ALREADY_CONTAINS_PRODUCT_OR_TASK'
+          }
+          'QA_R349_FRESH_DISPOSABLE_HOSTED_ADMIN_PRECONDITIONS_PASS'
+      - name: Install pinned .NET SDK for exact-source builder
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.400
+      - name: Build real combined four Framework components
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Build.ps1
+          if($LASTEXITCODE -ne 0 -or
+             !(Test-Path build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe -PathType Leaf)){
+            throw 'QA_R349_COMBINED_PRODUCT_BUILD_MISSING'
+          }
+      - name: Test actual native protected leaf lease against distinct already-admin process
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $test=(Resolve-Path build/qa/Test-R349-PrivilegedLeaf-Native-PR10.ps1).Path
+          $ps=Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+          & $ps -NoLogo -NoProfile -NonInteractive -File $test -HostLabel '${{ matrix.host }}' -SourceRoot (Resolve-Path .).Path
+          if($LASTEXITCODE -ne 0){throw 'QA_R349_NATIVE_COMBINED_REPLAY_LEAF_SECURITY_FAIL'}
+      - name: Preserve only bounded typed test receipts, not source or secrets
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0 # v7
+        with:
+          name: qa-r349-native-${{ matrix.host }}-${{ github.sha }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/R349_*/R349_PINNED_LEAF_NATIVE.json
+            ${{ runner.temp }}/R349_*/R349_ACTOR_RECEIPT.json
