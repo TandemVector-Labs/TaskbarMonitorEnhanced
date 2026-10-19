@@ -78,6 +78,59 @@ jobs:
              !(Test-Path -LiteralPath build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe -PathType Leaf)){
             throw 'R350_QA_BUILD_EXACT_SOURCE_FAILED'
           }
+      - name: Isolate AppData created by the verified Build selftests (no deletion)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          # The preceding pre-build gate proved this AppRoot did not exist.
+          # Build.ps1 runs the App selftests, which can create user-local
+          # config/log files. Move only that post-build test-owned directory
+          # aside; the privileged fixture must start from an absent AppRoot.
+          $app=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TaskbarMonitorEnhanced'
+          $base=[IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\')
+          if([string]::IsNullOrWhiteSpace($base) -or
+             -not [IO.Path]::IsPathRooted($base)){throw 'R350_RUNNER_TEMP_NOT_TRUSTED'}
+          $backup=Join-Path $base ('R350_build_selftest_AppRoot_'+$env:GITHUB_RUN_ID)
+          if([IO.Directory]::Exists($backup) -or
+             [IO.Path]::GetDirectoryName($backup) -cne $base){
+            throw 'R350_BUILD_PROFILE_BACKUP_COLLISION'
+          }
+          $installed=Join-Path $app 'TaskbarMonitorEnhanced.exe'
+          $protected=Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'TaskbarMonitorEnhanced'
+          if([IO.Directory]::Exists($protected) -or
+             [IO.File]::Exists($installed) -or
+             @(Get-Process TaskbarMonitorEnhanced,TaskbarMonitorSensorBroker,TaskbarMonitorSensorSupervisor -ErrorAction SilentlyContinue).Count -ne 0){
+            throw 'R350_BUILD_STEP_INTRODUCED_PRODUCT_INSTALL_OR_PROCESS'
+          }
+          if([IO.Directory]::Exists($app)){
+            $pending=[Collections.Generic.List[string]]::new()
+            $pending.Add($app)
+            while($pending.Count -gt 0){
+              $directory=$pending[$pending.Count-1]
+              $pending.RemoveAt($pending.Count-1)
+              $attrs=[IO.File]::GetAttributes($directory)
+              if(($attrs -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+                throw 'R350_BUILD_PROFILE_REPARSE_REFUSED'
+              }
+              foreach($member in [IO.Directory]::GetFileSystemEntries($directory)){
+                $properties=[IO.File]::GetAttributes($member)
+                if(($properties -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+                  throw 'R350_BUILD_PROFILE_CHILD_REPARSE_REFUSED'
+                }
+                if(($properties -band [IO.FileAttributes]::Directory) -ne 0){
+                  $pending.Add($member)
+                }
+              }
+            }
+            [IO.Directory]::Move($app,$backup)
+            if([IO.Directory]::Exists($app) -or
+               -not [IO.Directory]::Exists($backup)){
+              throw 'R350_BUILD_PROFILE_ISOLATION_POSTCONDITION'
+            }
+            'R350_BUILD_ONLY_APPROOT_ISOLATED_REVERSIBLY'
+          }else{
+            'R350_BUILD_APPROOT_ALREADY_ABSENT'
+          }
       - name: Run real PE Helper with production-generated PREPARED journal and separate already-admin process
         shell: pwsh
         run: |
@@ -87,6 +140,29 @@ jobs:
           $root=(Resolve-Path .).Path
           & $native -NoLogo -NoProfile -NonInteractive -File $script -HostLabel '${{ matrix.host }}' -SourceRoot $root
           if($LASTEXITCODE -ne 0){throw 'R350_REAL_ORIGINAL_HELPER_PREOPENED_ADMIN_DELETE_ACCEPTANCE_FAILED'}
+      - name: Restore isolated Build selftest profile without overwriting test data
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $app=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TaskbarMonitorEnhanced'
+          $base=[IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\')
+          $backup=Join-Path $base ('R350_build_selftest_AppRoot_'+$env:GITHUB_RUN_ID)
+          if([IO.Directory]::Exists($backup)){
+            if([IO.Directory]::Exists($app) -or
+               [IO.Path]::GetDirectoryName($backup) -cne $base -or
+               ([IO.File]::GetAttributes($backup) -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+              throw 'R350_TEST_LEFT_APPROOT_OR_UNTRUSTED_BUILD_BACKUP_REFUSED'
+            }
+            [IO.Directory]::Move($backup,$app)
+            if([IO.Directory]::Exists($backup) -or
+               -not [IO.Directory]::Exists($app)){
+              throw 'R350_BUILD_ONLY_PROFILE_RESTORE_POSTCONDITION'
+            }
+            'R350_BUILD_SELFTEST_PROFILE_RESTORED_EXACTLY'
+          }else{
+            'R350_NO_BUILD_PROFILE_BACKUP_TO_RESTORE'
+          }
       - name: Retain typed non-secret result, even when the native test fails
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
