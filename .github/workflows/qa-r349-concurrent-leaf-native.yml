@@ -89,7 +89,7 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'QA_R349_NATIVE_COMBINED_REPLAY_LEAF_SECURITY_FAIL'}
       - name: Preserve only bounded typed test receipts, not source or secrets
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0 # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: qa-r349-native-${{ matrix.host }}-${{ github.event.pull_request.head.sha }}
           retention-days: 7
