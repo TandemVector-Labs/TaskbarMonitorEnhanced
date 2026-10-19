@@ -9,6 +9,11 @@ using System.Globalization;
 using System.IO.Compression;
 using System.Reflection;
 using System.Security.Principal;
+using System.IO.Pipes;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+using System.Security.AccessControl;
+using System.Threading.Tasks;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -309,8 +314,19 @@ internal static partial class SetupProgram
             throw new InvalidDataException("Trusted native helper literal not balanced.");
         return compact.ToString();
     }
+
+    // Compatibility-only builder for pure non-launching tests; live runas passes a fresh pipe.
     static string BuildElevatedHelperCommand(string mode,string payload,string appRoot,string user)
     {
+        return BuildElevatedHelperCommandWithPipe(mode,payload,appRoot,user,
+            "tbme_sensor_fixture_nonruntime","00000000000000000000000000000000");
+    }
+    static string BuildElevatedHelperCommandWithPipe(string mode,string payload,string appRoot,string user,
+        string pipeName,string pipeNonce)
+    {
+        if(!Regex.IsMatch(pipeName,@"^tbme_sensor_(?:[0-9a-f]{32}|fixture_nonruntime)$") ||
+           !Regex.IsMatch(pipeNonce,@"^[0-9a-f]{32}$"))
+            throw new InvalidDataException("Sensor status channel parameters invalid.");
         if(mode!="Install" && mode!="Uninstall")
             throw new InvalidDataException("Unexpected elevated sensor mode.");
         string brokerHash=Sha256Resource("Payload.TaskbarMonitorSensorBroker.exe");
@@ -342,13 +358,17 @@ internal static partial class SetupProgram
           "$ErrorActionPreference='Stop'\n"+
           "$blob=[Convert]::FromBase64String('"+packed+"')\n"+
           "$ms=[IO.MemoryStream]::new($blob)\n"+
-          "$gzip=[IO.Compression.GZipStream]::new($ms,[IO.Compression.CompressionMode]::Decompress)\n"+
-          "$reader=[IO.StreamReader]::new($gzip,[Text.Encoding]::UTF8)\n"+
-          "try{$code=$reader.ReadToEnd()}finally{$reader.Dispose();$gzip.Dispose();$ms.Dispose()}\n"+
-          "$payload=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"+Base64Utf8Argument(payload)+"'))\n"+
-          "$app=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"+Base64Utf8Argument(appRoot)+"'))\n"+
-          "$user=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"+Base64Utf8Argument(user)+"'))\n"+
-          "& ([ScriptBlock]::Create($code)) -Mode '"+mode+"' -PayloadDir $payload -AppRoot $app -UserId $user -ExpectedBrokerSHA256 '"+brokerHash+"' -ExpectedSupervisorSHA256 '"+supervisorHash+"' -ExpectedBackendZipSHA256 '"+backendZipHash+"'\n";
+          "$gzip=[IO.Compression.GZipStream]::new($ms,[IO.Compression.CompressionMode]0)\n"+
+          "$reader=[IO.StreamReader]::new($gzip)\n"+
+          "try{$code=$reader.ReadToEnd()}finally{$reader.Close()}\n"+
+          "function d($s){[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($s))}\n"+
+          "$p=d('"+Base64Utf8Argument(payload)+"')\n"+
+          "$a=d('"+Base64Utf8Argument(appRoot)+"')\n"+
+          "$u=d('"+Base64Utf8Argument(user)+"')\n"+
+          // These are strict [a-f0-9] + static-prefix allowlisted values, not untrusted scripts.
+          "$q='"+pipeName+"'\n"+
+          "$n='"+pipeNonce+"'\n"+
+          "& ([ScriptBlock]::Create($code)) -Mode '"+mode+"' -PayloadDir $p -AppRoot $a -UserId $u -ExpectedBrokerSHA256 '"+brokerHash+"' -ExpectedSupervisorSHA256 '"+supervisorHash+"' -ExpectedBackendZipSHA256 '"+backendZipHash+"' -StatusPipe $q -StatusNonce $n\n";
         string encoded=Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
         // Preserve the established UTF-16 EncodedCommand path when it fits.
         // Windows Process creation caps the entire command line at 32,767 chars.
@@ -393,55 +413,303 @@ internal static partial class SetupProgram
     // inspected in disposable Windows without granting UAC or starting it.
     static ProcessStartInfo BuildElevatedSensorProcessInfo(string mode,string payload,string appRoot,string user)
     {
+        return BuildElevatedSensorProcessInfoWithPipe(mode,payload,appRoot,user,
+            "tbme_sensor_fixture_nonruntime","00000000000000000000000000000000");
+    }
+    static ProcessStartInfo BuildElevatedSensorProcessInfoWithPipe(string mode,string payload,string appRoot,string user,
+        string pipeName,string pipeNonce)
+    {
         ProcessStartInfo psi=new ProcessStartInfo();
         psi.FileName=TrustedSystemPowerShellPath();
         psi.WorkingDirectory=Path.GetDirectoryName(psi.FileName);
-        psi.Arguments=BuildElevatedHelperCommand(mode,payload,appRoot,user);
+        psi.Arguments=BuildElevatedHelperCommandWithPipe(mode,payload,appRoot,user,pipeName,pipeNonce);
         psi.UseShellExecute=true;
         psi.Verb="runas";
         return psi;
     }
 
+
+    // R080 (DRAFT): asInvoker Setup owns result/log persistence, not runas.
+    // No user-tree mutation is performed by this object until OS child identity
+    // and a one-shot authenticated pipe result have been validated.
+    sealed class SensorStatusReceiver : IDisposable
+    {
+        const int MaxWireBytes=65000;
+        [DllImport("kernel32.dll",SetLastError=true)]
+        static extern bool GetNamedPipeClientProcessId(SafePipeHandle handle,out uint pid);
+        readonly NamedPipeServerStream stream;
+        readonly IAsyncResult connection;
+        readonly string nonce;
+        Task<string> greeting, frame;
+        bool connected, acknowledged;
+        string message;
+        public readonly string Name;
+        public string Nonce {get {return nonce;}}
+        public bool HasResult {get {return message!=null;}}
+
+        static string BoundedLine(Stream input,int max)
+        {
+            using(MemoryStream buffer=new MemoryStream())
+            {
+                for(int i=0;i<=max;i++)
+                {
+                    int b=input.ReadByte();
+                    if(b<0)throw new IOException("Sensor IPC channel ended without result.");
+                    if(b==10)return new UTF8Encoding(false,true).GetString(buffer.ToArray());
+                    if(i==max)throw new InvalidDataException("Sensor IPC frame over limit.");
+                    buffer.WriteByte((byte)b);
+                }
+            }
+            throw new InvalidDataException("Sensor IPC frame never terminated.");
+        }
+
+        public SensorStatusReceiver()
+        {
+            Name="tbme_sensor_"+Guid.NewGuid().ToString("N");
+            nonce=Guid.NewGuid().ToString("N");
+            PipeSecurity acl=new PipeSecurity();
+            acl.SetAccessRuleProtection(true,false);
+            SecurityIdentifier current=WindowsIdentity.GetCurrent().User;
+            if(current==null)throw new InvalidOperationException("Requesting user SID unavailable.");
+            acl.AddAccessRule(new PipeAccessRule(current,PipeAccessRights.FullControl,AccessControlType.Allow));
+            // R305 requires the elevated Helper's effective account SID to
+            // equal this requesting user SID, including under runas / UAC.
+            // A different administrator account MUST fail closed. Never allow
+            // all Authenticated Users to claim the one-instance IPC slot.
+            // Kernel client PID, live process/session and nonce are separately checked.
+            stream=new NamedPipeServerStream(Name,PipeDirection.InOut,1,
+                PipeTransmissionMode.Byte,PipeOptions.Asynchronous,4096,4096,acl);
+            connection=stream.BeginWaitForConnection(null,null);
+        }
+
+        public void Poll(Process child)
+        {
+            if(!connected && connection.IsCompleted)
+            {
+                stream.EndWaitForConnection(connection);
+                if(child==null || child.HasExited)
+                    throw new InvalidDataException("Sensor IPC connected without a live expected child.");
+                uint peer;
+                if(!GetNamedPipeClientProcessId(stream.SafePipeHandle,out peer))
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                if(peer!=(uint)child.Id || child.SessionId!=Process.GetCurrentProcess().SessionId)
+                    throw new InvalidDataException("Sensor IPC client OS process identity mismatch.");
+                connected=true;
+                greeting=Task.Factory.StartNew<string>(()=>BoundedLine(stream,96));
+            }
+            if(connected && !acknowledged && greeting.IsCompleted)
+            {
+                if(!String.Equals(greeting.GetAwaiter().GetResult(),"HELLO|"+nonce,StringComparison.Ordinal))
+                    throw new InvalidDataException("Sensor IPC HELLO nonce mismatch.");
+                byte[] ack=Encoding.UTF8.GetBytes("ACK|"+nonce+"\n");
+                stream.Write(ack,0,ack.Length);
+                stream.Flush();
+                acknowledged=true;
+                frame=Task.Factory.StartNew<string>(()=>BoundedLine(stream,MaxWireBytes));
+            }
+            if(acknowledged && message==null && frame.IsCompleted)
+                message=frame.GetAwaiter().GetResult();
+        }
+
+        public void PersistAsInvoker()
+        {
+            PersistToUserRoot(AppRoot);
+        }
+
+        // Kept internal for the exact native Windows regression to exercise
+        // the *same* persistence logic on a new disposable test-owned directory.
+        // The production asInvoker caller always uses its real AppRoot.
+
+        // R090 strict, bounded JSON contract. The transport authenticates a
+        // peer/process/nonce, NOT the semantic contents of its JSON message.
+        // Only a flat object with all source-owned typed fields can ever be
+        // stored as a normal user's sensor status.
+        static void ValidateSensorStatusJson(string json)
+        {
+            var schema=new Dictionary<string,char>(StringComparer.Ordinal)
+            {
+                {"Status",'s'},{"Message",'s'},{"PawnIOStatus",'s'},
+                {"PawnIOExitCode",'i'},{"RebootRequired",'b'},
+                {"TaskInstalled",'b'},{"SensorHealthy",'b'},
+                {"SupervisorHealthy",'b'},{"CpuTransportHealthy",'b'},
+                {"GpuTransportHealthy",'b'},{"StorageTransportHealthy",'b'},
+                {"CpuDataAvailable",'b'},{"Architecture",'s'},
+                {"RollbackPerformed",'b'},{"RollbackSucceeded",'b'},
+                {"PreviousSensorLayerPresent",'b'},{"Time",'s'},{"LogPath",'s'}
+            };
+            if(json==null || json.Length>10000)throw new InvalidDataException("Sensor JSON too large.");
+            // No external JSON package / new assembly dependency: exact
+            // PowerShell ConvertTo-Json flat schema, RFC-style JSON string
+            // escaping, and nonexponential bounded field tokenization.
+            const string member=@"\A\s*""(?<name>[A-Za-z][A-Za-z0-9]*)""\s*:\s*(?<value>""(?:[^""\\\u0000-\u001F]|\\(?:[""\\/bfnrt]|u[0-9a-fA-F]{4}))*""|true|false|null|-?(?:0|[1-9][0-9]*))\s*";
+            int pos=0;
+            Action skip=()=>{while(pos<json.Length && (json[pos]==' ' || json[pos]=='\t' || json[pos]=='\r' || json[pos]=='\n'))pos++;};
+            skip();
+            if(pos>=json.Length || json[pos++]!='{')throw new InvalidDataException("Sensor JSON must be an object.");
+            var seen=new HashSet<string>(StringComparer.Ordinal);
+            var values=new Dictionary<string,string>(StringComparer.Ordinal);
+            while(true)
+            {
+                skip();
+                Match field=Regex.Match(json.Substring(pos),member,RegexOptions.CultureInvariant,
+                                        TimeSpan.FromMilliseconds(600));
+                if(!field.Success)throw new InvalidDataException("Invalid sensor JSON field syntax.");
+                string key=field.Groups["name"].Value;
+                string value=field.Groups["value"].Value;
+                char kind;
+                if(!schema.TryGetValue(key,out kind) || !seen.Add(key))
+                    throw new InvalidDataException("Unknown or repeated sensor JSON field.");
+                bool quoted=value.Length>=2 && value[0]=='"' && value[value.Length-1]=='"';
+                if(kind=='s' && !quoted)throw new InvalidDataException("Sensor string field not quoted.");
+                if(kind=='b' && value!="true" && value!="false")
+                    throw new InvalidDataException("Sensor boolean field invalid.");
+                if(kind=='i' && value!="null")
+                {
+                    int number;
+                    if(!Int32.TryParse(value,NumberStyles.AllowLeadingSign,CultureInfo.InvariantCulture,out number))
+                        throw new InvalidDataException("Sensor numeric field invalid.");
+                }
+                values.Add(key,value);
+                pos+=field.Length;
+                skip();
+                if(pos>=json.Length)throw new InvalidDataException("Truncated sensor JSON object.");
+                if(json[pos]==','){pos++;continue;}
+                if(json[pos]=='}'){pos++;break;}
+                throw new InvalidDataException("Invalid sensor JSON object separator.");
+            }
+            skip();
+            if(pos!=json.Length || seen.Count!=schema.Count)
+                throw new InvalidDataException("Sensor JSON fields incomplete or extra data.");
+            // Status is canonical, unescaped ASCII; ambiguous encodings
+            // cannot silently claim a different product health state.
+            string status=values["Status"];
+            switch(status)
+            {
+                case "\"READY\"":
+                    if(values["SensorHealthy"]!="true" || values["SupervisorHealthy"]!="true" ||
+                       values["RebootRequired"]!="false")
+                        throw new InvalidDataException("READY status contradicts sensor health.");
+                    break;
+                case "\"REBOOT_REQUIRED\"":
+                    if(values["RebootRequired"]!="true")
+                        throw new InvalidDataException("Reboot status has no reboot flag.");
+                    break;
+                case "\"DEGRADED\"":
+                case "\"DEGRADED_DATA\"":
+                case "\"DEGRADED_ROLLED_BACK\"":
+                case "\"DEGRADED_ROLLBACK_FAILED\"":
+                case "\"DEGRADED_OTHER_USER_SENSOR_LAYER_PRESERVED\"":
+                case "\"UNAVAILABLE\"":
+                case "\"UNINSTALLED\"":
+                case "\"UNINSTALL_WARNING\"":
+                    break;
+                default:
+                    throw new InvalidDataException("Unknown sensor status value.");
+            }
+            if(values["Message"]=="\"\"" || values["Architecture"]=="\"\"" ||
+               values["Time"]=="\"\"" || values["LogPath"]=="\"\"")
+                throw new InvalidDataException("Mandatory sensor metadata empty.");
+            if(status=="\"DEGRADED_ROLLED_BACK\"" &&
+               (values["RollbackPerformed"]!="true" || values["RollbackSucceeded"]!="true"))
+                throw new InvalidDataException("Rollback success result inconsistent.");
+            if(status=="\"DEGRADED_ROLLBACK_FAILED\"" && values["RollbackPerformed"]!="true")
+                throw new InvalidDataException("Rollback failure status inconsistent.");
+        }
+
+        internal void PersistToUserRoot(string userRoot)
+        {
+            if(String.IsNullOrWhiteSpace(userRoot) || !Path.IsPathRooted(userRoot))
+                throw new InvalidDataException("Sensor status destination root invalid.");
+            string canonical=Path.GetFullPath(userRoot).TrimEnd(Path.DirectorySeparatorChar);
+            if(canonical.Length<4)
+                throw new InvalidDataException("Sensor status destination root unsafe.");
+            if(message==null)throw new InvalidDataException("No verified sensor status frame.");
+            string[] parts=message.Split('|');
+            if(parts.Length!=4 || parts[0]!="TBME80" ||
+               !String.Equals(parts[1],nonce,StringComparison.Ordinal))
+                throw new InvalidDataException("Sensor IPC result schema or nonce mismatch.");
+            string json=new UTF8Encoding(false,true).GetString(Convert.FromBase64String(parts[2]));
+            string logs=new UTF8Encoding(false,true).GetString(Convert.FromBase64String(parts[3]));
+            if(logs.Length>25000)
+                throw new InvalidDataException("Sensor IPC log exceeds size limit.");
+            ValidateSensorStatusJson(json);
+            string logRoot=Path.Combine(canonical,"Logs");
+            Directory.CreateDirectory(logRoot);
+            if(logs.Length>0)
+                File.AppendAllText(Path.Combine(logRoot,"sensor_install.log"),logs+"\n",Encoding.UTF8);
+            File.WriteAllText(Path.Combine(logRoot,"sensor_install_result.json"),json,Encoding.UTF8);
+        }
+
+        public void Dispose() {stream.Dispose();}
+    }
+
+    // Uses exactly one OS-attested pipe client for this new UAC child. On
+    // cancellation/spoof/transport fault fail closed; never ask runas to write
+    // status into the calling user's reparse-mutable AppData.
+
     static int ElevatedHelper(string mode,string payload,string appRoot,string user,int timeoutMs)
     {
-        ProcessStartInfo psi=BuildElevatedSensorProcessInfo(mode,payload,appRoot,user);
-
-        Process elevated=null;
-        Exception launchError=null;
-        ManualResetEvent launchFinished=new ManualResetEvent(false);
-        Thread launchThread=new Thread(new ThreadStart(delegate{
-            try{elevated=Process.Start(psi);}
-            catch(Exception ex){launchError=ex;}
-            finally{try{launchFinished.Set();}catch{}}
-        }));
-        launchThread.IsBackground=true;
-        try{launchThread.SetApartmentState(ApartmentState.STA);}catch{}
-
-        DateTime overallDeadline=DateTime.UtcNow.AddMilliseconds(timeoutMs);
-        launchThread.Start();
-
-        int launchBudget=Math.Min(30000,Math.Max(1000,timeoutMs));
-        DateTime launchDeadline=DateTime.UtcNow.AddMilliseconds(launchBudget);
-        while(!launchFinished.WaitOne(100) && DateTime.UtcNow<launchDeadline)
-            Application.DoEvents();
-
-        if(!launchFinished.WaitOne(0))
-            return 125;
-
-        if(launchError!=null)
-            throw new InvalidOperationException("Could not start protected-sensor helper.",launchError);
-        if(elevated==null)
-            throw new InvalidOperationException("Could not start protected-sensor helper.");
-
-        while(!elevated.HasExited && DateTime.UtcNow<overallDeadline){
-            Application.DoEvents();
-            Thread.Sleep(100);
+        using(SensorStatusReceiver channel=new SensorStatusReceiver())
+        {
+            ProcessStartInfo psi=BuildElevatedSensorProcessInfoWithPipe(
+                mode,payload,appRoot,user,channel.Name,channel.Nonce);
+            Process elevated=null;
+            Exception launchError=null;
+            using(ManualResetEvent launchFinished=new ManualResetEvent(false))
+            {
+                Thread launchThread=new Thread(new ThreadStart(delegate {
+                    try {elevated=Process.Start(psi);}
+                    catch(Exception ex) {launchError=ex;}
+                    finally {try{launchFinished.Set();}catch{}}
+                }));
+                launchThread.IsBackground=true;
+                try {launchThread.SetApartmentState(ApartmentState.STA);}catch{}
+                DateTime deadline=DateTime.UtcNow.AddMilliseconds(timeoutMs);
+                launchThread.Start();
+                int launchBudget=Math.Min(30000,Math.Max(1000,timeoutMs));
+                DateTime launchDeadline=DateTime.UtcNow.AddMilliseconds(launchBudget);
+                while(!launchFinished.WaitOne(100) && DateTime.UtcNow<launchDeadline)
+                    Application.DoEvents();
+                if(!launchFinished.WaitOne(0))return 125;
+                if(launchError!=null)
+                    throw new InvalidOperationException("Could not launch protected sensor helper.",launchError);
+                if(elevated==null)
+                    throw new InvalidOperationException("Protected sensor helper process unavailable.");
+                try
+                {
+                    DateTime exitSeen=DateTime.MaxValue;
+                    while(DateTime.UtcNow<deadline)
+                    {
+                        channel.Poll(elevated);
+                        if(elevated.HasExited)
+                        {
+                            if(channel.HasResult)break;
+                            if(exitSeen==DateTime.MaxValue)
+                                exitSeen=DateTime.UtcNow.AddSeconds(3);
+                            if(DateTime.UtcNow>=exitSeen)break;
+                        }
+                        Application.DoEvents();
+                        Thread.Sleep(75);
+                    }
+                    if(!elevated.HasExited)
+                    {
+                        try{elevated.Kill();}catch{}
+                        return 124;
+                    }
+                    if(channel.HasResult)channel.PersistAsInvoker();
+                    else if(elevated.ExitCode==0)
+                        throw new InvalidDataException("Protected sensor helper ended without authenticated status.");
+                    return elevated.ExitCode;
+                }
+                catch
+                {
+                    // Only the newly launched Helper owned by this Setup is stopped.
+                    if(!elevated.HasExited){try{elevated.Kill();}catch{}}
+                    throw;
+                }
+                finally {elevated.Dispose();}
+            }
         }
-        if(!elevated.HasExited){
-            try{elevated.Kill();}catch{}
-            return 124;
-        }
-        return elevated.ExitCode;
     }
 
     // R323: remove only shortcuts that still point at this product and retain

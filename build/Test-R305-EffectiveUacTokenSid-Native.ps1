@@ -66,11 +66,16 @@ $defs=@($ast.FindAll({param($n)
 if($defs.Count -ne 2){throw 'R305_EXPECTED_TWO_GUARD_AST_NODES'}
 $checkAt=$raw.IndexOf("SENSOR_BOUNDARY_ELEVATED_TOKEN_ACCOUNT_MISMATCH",[StringComparison]::Ordinal)
 $profileAt=$raw.IndexOf('$profileKey=',[StringComparison]::Ordinal)
-$logsAt=$raw.IndexOf('New-Item -ItemType Directory -Force -Path $LogsRoot',[StringComparison]::Ordinal)
-if($checkAt -lt 0 -or $profileAt -le $checkAt -or $logsAt -le $profileAt){
- throw 'R305_ELEVATED_TOKEN_BOUNDARY_NOT_PREWRITE_OR_UNIQUE'
+$validatedAt=$raw.IndexOf('$validatedSensorSid=Assert-SensorPrivilegedBoundary',[StringComparison]::Ordinal)
+$pipeAt=$raw.IndexOf('SENSOR_STATUS_CHANNEL_REQUIRED',[StringComparison]::Ordinal)
+if($checkAt -lt 0 -or $profileAt -le $checkAt -or
+   $validatedAt -le $profileAt -or $pipeAt -le $validatedAt -or
+   $raw.Contains('New-Item -ItemType Directory -Force -Path $LogsRoot') -or
+   $raw.Contains('Add-Content -LiteralPath $LogPath') -or
+   $raw.Contains('Set-Content -LiteralPath $ResultPath')){
+ throw 'R305_ELEVATED_TOKEN_CHECK_NOT_BEFORE_SECURE_IPC_OR_PRIVILEGED_PROFILE_WRITES'
 }
-$checks.Add('EFFECTIVE_TOKEN_SID_CHECK_BEFORE_PROFILE_AND_LOG_WRITES')
+$checks.Add('EFFECTIVE_TOKEN_SID_CHECK_BEFORE_SESSION_IPC_NO_PRIVILEGED_USER_LOG_WRITES')
 $assembly=[Reflection.Assembly]::LoadFile([IO.Path]::GetFullPath($setup))
 $resource=$assembly.GetManifestResourceStream('Payload.TBME_Setup_Elevated_Helper.ps1')
 if(!$resource){throw 'R305_PRIVATE_SETUP_EMBEDDED_RESOURCE_MISSING'}

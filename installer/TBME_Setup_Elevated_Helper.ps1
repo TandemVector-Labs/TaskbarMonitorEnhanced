@@ -5,7 +5,9 @@ param(
     [Parameter(Mandatory=$true)][string]$UserId,
     [string]$ExpectedBrokerSHA256='',
     [string]$ExpectedSupervisorSHA256='',
-    [string]$ExpectedBackendZipSHA256=''
+    [string]$ExpectedBackendZipSHA256='',
+    [string]$StatusPipe='',
+    [string]$StatusNonce=''
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -119,6 +121,32 @@ function Assert-SensorPrivilegedBoundary(
     return $sid
 }
 $validatedSensorSid=Assert-SensorPrivilegedBoundary $Mode $PayloadDir $AppRoot $UserId
+# R080: privilege boundary. Before mutating protected resources, bind the
+# expected asInvoker Setup named pipe; NO writes to mutable user Logs here.
+if($StatusPipe -cnotmatch '^tbme_sensor_[0-9a-f]{32}$' -or
+   $StatusNonce -cnotmatch '^[0-9a-f]{32}$'){
+    throw 'SENSOR_STATUS_CHANNEL_REQUIRED'
+}
+$script:StatusLogs=[Collections.Generic.List[string]]::new()
+$script:StatusPipeClient=[IO.Pipes.NamedPipeClientStream]::new(
+    '.',$StatusPipe,[IO.Pipes.PipeDirection]::InOut)
+try{
+    $script:StatusPipeClient.Connect(12000)
+    $hello=[Text.Encoding]::UTF8.GetBytes(('HELLO|'+$StatusNonce+[char]10))
+    $script:StatusPipeClient.Write($hello,0,$hello.Length)
+    $script:StatusPipeClient.Flush()
+    $reader=[IO.StreamReader]::new($script:StatusPipeClient,[Text.Encoding]::UTF8,
+                                 $false,1024,$true)
+    $ack=$reader.ReadLine()
+    $reader.Dispose()
+    if($ack -cne ('ACK|'+$StatusNonce)){
+        throw 'SENSOR_STATUS_PEER_NOT_VERIFIED'
+    }
+}catch{
+    $script:StatusPipeClient.Dispose()
+    $script:StatusPipeClient=$null
+    throw
+}
 
 # R335: native in-memory handle guards pin canonical per-user profile
 # ancestry and exact file handles across log/result writes. Refuse reparse
@@ -408,12 +436,7 @@ $script:SensorJournalRoot=Join-Path ([Environment]::GetFolderPath([Environment+S
 $LogsRoot=Join-Path $AppRoot 'Logs'
 $ResultPath=Join-Path $LogsRoot 'sensor_install_result.json'
 $LogPath=Join-Path $LogsRoot 'sensor_install.log'
-# R328: the user owns this tree and can replace its directories between
-# the original privileged preflight and its later log/result writes.
-# Recheck immediately around creation; this does not close atomic races.
-Assert-SensorBoundaryNoReparse $LogsRoot
-New-Item -ItemType Directory -Force -Path $LogsRoot | Out-Null
-Assert-SensorBoundaryNoReparse $LogsRoot
+# No privileged creation of AppRoot/Logs; asInvoker Setup owns status persistence.
 
 # R21 health channels are initialized before any early-return/uninstall branch so
 # Write-Result can always emit a stable schema under StrictMode.
@@ -461,11 +484,14 @@ function Assert-SensorUserLogSink([string]$Target){
     }
 }
 
+# R080: privileged Helper MUST NOT write user-owned log or JSON paths.
+# These methods only stage bounded in-memory text and send a single result.
 function Write-Log([string]$Message){
-    Assert-SensorUserLogSink $LogPath
-    $line=(Get-Date).ToString('o')+' '+$Message+[Environment]::NewLine
-    $lease=[TBMEScopedUserLogLease]::new($script:ValidatedSensorProfileRoot,$AppRoot,$LogsRoot,$LogPath)
-    try{$lease.Append($line)}finally{$lease.Dispose()}
+    if($null -eq $script:StatusPipeClient){throw 'SENSOR_STATUS_CHANNEL_CLOSED'}
+    $line=(Get-Date).ToString('o')+' '+$Message
+    if($script:StatusLogs.Count -lt 60){
+        $script:StatusLogs.Add($line.Substring(0,[Math]::Min(256,$line.Length)))
+    }
 }
 function Write-Result(
     [string]$Status,
@@ -476,7 +502,7 @@ function Write-Result(
     [bool]$TaskInstalled,
     [bool]$SensorHealthy
 ){
-    Assert-SensorUserLogSink $ResultPath
+    if($null -eq $script:StatusPipeClient){throw 'SENSOR_STATUS_CHANNEL_CLOSED'}
     $json=[ordered]@{
         Status=$Status
         Message=$Message
@@ -496,10 +522,23 @@ function Write-Result(
         PreviousSensorLayerPresent=$PreviousSensorLayerPresent
         Time=(Get-Date).ToString('o')
         LogPath=$LogPath
-    } | ConvertTo-Json -Depth 5
-    $lease=[TBMEScopedUserLogLease]::new($script:ValidatedSensorProfileRoot,$AppRoot,$LogsRoot,$ResultPath)
-    try{$lease.Overwrite($json+[Environment]::NewLine)}finally{$lease.Dispose()}
+    } | ConvertTo-Json -Depth 5 -Compress
+    $logs=($script:StatusLogs -join [string][char]10)
+    $frame='TBME80|'+$StatusNonce+'|'+
+           [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$json))+'|'+
+           [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$logs))+
+           [char]10
+    $data=[Text.Encoding]::UTF8.GetBytes($frame)
+    if($data.Length -gt 60000){throw 'SENSOR_STATUS_FRAME_TOO_LARGE'}
+    try{
+        $script:StatusPipeClient.Write($data,0,$data.Length)
+        $script:StatusPipeClient.Flush()
+    }finally{
+        $script:StatusPipeClient.Dispose()
+        $script:StatusPipeClient=$null
+    }
 }
+
 function Get-PawnIOVersion {
     foreach($key in @(
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PawnIO',

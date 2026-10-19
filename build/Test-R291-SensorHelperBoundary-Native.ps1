@@ -59,10 +59,18 @@ try{
  },$true))
  if($defs.Count -ne 2){throw 'R291_GUARD_FUNCTION_COUNT_MISMATCH'}
  $raw=Get-Content $src -Raw
- $first=$raw.IndexOf('$validatedSensorSid=Assert-SensorPrivilegedBoundary',[StringComparison]::Ordinal)
- $write=$raw.IndexOf('New-Item -ItemType Directory -Force -Path $LogsRoot',[StringComparison]::Ordinal)
- if($first -lt 0 -or $write -le $first){throw 'R291_PREFLIGHT_MUST_PRECEDE_WRITES'}
- $log.Add('PREFLIGHT_EARLIER_THAN_ALL_LOG_WRITES')
+  $first=$raw.IndexOf('$validatedSensorSid=Assert-SensorPrivilegedBoundary',[StringComparison]::Ordinal)
+  $pipeGuard=$raw.IndexOf('SENSOR_STATUS_CHANNEL_REQUIRED',[StringComparison]::Ordinal)
+  $logsCreate=$raw.IndexOf('New-Item -ItemType Directory -Force -Path $LogsRoot',[StringComparison]::Ordinal)
+  $privilegedLog=$raw.IndexOf('Add-Content -LiteralPath $LogPath',[StringComparison]::Ordinal)
+  $privilegedResult=$raw.IndexOf('Set-Content -LiteralPath $ResultPath',[StringComparison]::Ordinal)
+  # R080: reject regressions to privileged user-profile writes rather than
+  # demand those unsafe writes as the old R291 test mistakenly did.
+  if($first -lt 0 -or $pipeGuard -le $first -or
+     $logsCreate -ge 0 -or $privilegedLog -ge 0 -or $privilegedResult -ge 0){
+    throw 'R291_ELEVATED_SID_CHECK_AND_IPC_PREWRITE_GUARD_FAILED'
+  }
+  $log.Add('SID_PREFLIGHT_BEFORE_IPC_NO_PRIVILEGED_APPDATA_STATUS_WRITES')
  # Dot-source ONLY the two selected function ASTs, never the full privileged script.
  . ([scriptblock]::Create(($defs|ForEach-Object {$_.Extent.Text}) -join [Environment]::NewLine))
  $validInstall=Join-Path $tempRoot ('tbme_setup_'+('a'*32))
