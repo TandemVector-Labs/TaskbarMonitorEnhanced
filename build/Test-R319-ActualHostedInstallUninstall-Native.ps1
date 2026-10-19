@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
  [Parameter(Mandatory=$true)][ValidateSet('A','B')][string]$HostLabel,
  [Parameter(Mandatory=$true)][string]$CandidateDir
@@ -158,8 +158,8 @@ try{
   $startShortcut=$shell.CreateShortcut($startLink)
   $repairShortcut=$shell.CreateShortcut($repairLink)
   if(-not [string]::Equals([string]$startShortcut.TargetPath,$main,[StringComparison]::OrdinalIgnoreCase) -or
-     -not [string]::Equals([string]$repairShortcut.TargetPath,$uninstall,[StringComparison]::OrdinalIgnoreCase) -or
-     [string]$repairShortcut.Arguments -cne '/repair-sensors'){
+     -not [string]::Equals([string]$repairShortcut.TargetPath,$main,[StringComparison]::OrdinalIgnoreCase) -or
+     [string]$repairShortcut.Arguments -cne '--repair-sensors'){
    throw 'R319_ACTUAL_COM_SHORTCUT_TARGET_OR_ARGS_WRONG'
   }
  }finally{

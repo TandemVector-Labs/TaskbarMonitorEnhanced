@@ -75,6 +75,45 @@ namespace TaskbarMonitorEnhanced
         public static readonly string Log = Path.Combine(Logs, "tbme_csharp_" + DateTime.Now.ToString("yyyyMMdd") + ".log");
     }
 
+    // R352: system UI tools must not be resolved from the current directory
+    // or user-controlled PATH when a user opens diagnostics/Task Manager.
+    internal static class WindowsShellCommands
+    {
+        static string RequireSystemExecutable(string folder,string name)
+        {
+            if(name!="explorer.exe" && name!="Taskmgr.exe")
+                throw new InvalidDataException("Unknown Windows tool not permitted.");
+            if(String.IsNullOrWhiteSpace(folder) || !Path.IsPathRooted(folder))
+                throw new InvalidDataException("Windows tool directory unavailable.");
+            string root=Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar);
+            if((File.GetAttributes(root)&FileAttributes.ReparsePoint)!=0)
+                throw new InvalidDataException("Windows tool directory is redirected.");
+            string exe=Path.GetFullPath(Path.Combine(root,name));
+            if(!String.Equals(Path.GetDirectoryName(exe),root,StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Windows tool executable escaped its system directory.");
+            if(!File.Exists(exe))
+                throw new FileNotFoundException("Canonical Windows tool unavailable.",exe);
+            if((File.GetAttributes(exe)&FileAttributes.ReparsePoint)!=0)
+                throw new InvalidDataException("Windows tool executable is redirected.");
+            return exe;
+        }
+        internal static ProcessStartInfo TaskManager()
+        {
+            return new ProcessStartInfo(RequireSystemExecutable(Environment.SystemDirectory,"Taskmgr.exe"))
+            { UseShellExecute=true };
+        }
+        internal static ProcessStartInfo Explorer(string folder)
+        {
+            if(String.IsNullOrWhiteSpace(folder) || !Path.IsPathRooted(folder) ||
+               folder.IndexOf('"')>=0)
+                throw new InvalidDataException("Explorer target is not a canonical folder path.");
+            string full=Path.GetFullPath(folder);
+            return new ProcessStartInfo(RequireSystemExecutable(
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows),"explorer.exe"))
+            { UseShellExecute=true, Arguments="\""+full+"\"" };
+        }
+    }
+
     internal static class SensorSupervisorSelfHeal
     {
         public const int StartupGraceSeconds=90;
@@ -135,21 +174,49 @@ namespace TaskbarMonitorEnhanced
             return false;
         }
 
+        // R351: never fall back to a bare schtasks.exe resolved through PATH.
+        // A missing, redirected or otherwise untrusted system executable is
+        // a fail-closed self-heal outcome, not permission to launch user code.
+        static string RequireSystemTaskSchedulerPath(string systemDirectory)
+        {
+            if(String.IsNullOrWhiteSpace(systemDirectory) || !Path.IsPathRooted(systemDirectory))
+                throw new InvalidDataException("Canonical Windows system directory unavailable.");
+            string system=Path.GetFullPath(systemDirectory).TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar);
+            if(String.IsNullOrWhiteSpace(system) ||
+               (File.GetAttributes(system)&FileAttributes.ReparsePoint)!=0)
+                throw new InvalidDataException("Windows system directory is unavailable or redirected.");
+            string exe=Path.GetFullPath(Path.Combine(system,"schtasks.exe"));
+            if(!String.Equals(Path.GetDirectoryName(exe),system,StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Task Scheduler executable escaped its system directory.");
+            if(!File.Exists(exe))
+                throw new FileNotFoundException("Canonical system Task Scheduler executable is unavailable.",exe);
+            if((File.GetAttributes(exe)&FileAttributes.ReparsePoint)!=0)
+                throw new InvalidDataException("System Task Scheduler executable is redirected.");
+            return exe;
+        }
+
+        // Keep command construction separate from Process.Start: isolated
+        // Windows tests can inspect the actual compiled process descriptor
+        // without running schtasks, a scheduled task or elevated code.
+        static ProcessStartInfo BuildTaskSchedulerRunProcessInfo()
+        {
+            ProcessStartInfo psi=new ProcessStartInfo();
+            psi.FileName=RequireSystemTaskSchedulerPath(Environment.SystemDirectory);
+            psi.WorkingDirectory=Environment.SystemDirectory;
+            psi.Arguments="/Run /TN \""+TaskName+"\"";
+            psi.UseShellExecute=false;
+            psi.CreateNoWindow=true;
+            psi.RedirectStandardOutput=true;
+            psi.RedirectStandardError=true;
+            return psi;
+        }
+
         public static int TryRunExistingTask(out string detail)
         {
             detail="";
             try
             {
-                string system=Environment.GetFolderPath(Environment.SpecialFolder.System);
-                string exe=Path.Combine(system,"schtasks.exe");
-                if(!File.Exists(exe))exe="schtasks.exe";
-                ProcessStartInfo psi=new ProcessStartInfo();
-                psi.FileName=exe;
-                psi.Arguments="/Run /TN \""+TaskName+"\"";
-                psi.UseShellExecute=false;
-                psi.CreateNoWindow=true;
-                psi.RedirectStandardOutput=true;
-                psi.RedirectStandardError=true;
+                ProcessStartInfo psi=BuildTaskSchedulerRunProcessInfo();
                 Process x=Process.Start(psi);
                 if(x==null){detail="START_RETURNED_NULL";return -2;}
                 if(!x.WaitForExit(8000))
@@ -930,6 +997,90 @@ namespace TaskbarMonitorEnhanced
             return info;
         }
 
+        // R355: repair uses the immutable *current* official release. Do
+        // not elevate an AppData\Uninstall.exe copied during installation:
+        // user-owned app files are replaceable after Setup has exited.
+        // Keep JSON parsing pure so untrusted release metadata is tested
+        // with deterministic hostile fixtures and no network/UAC calls.
+        internal static ReleaseUpdateInfo ParseCurrentRepairReleaseMetadata(string json)
+        {
+            if(String.IsNullOrWhiteSpace(json)||json.Length>3145728)
+                throw new InvalidDataException("Current repair release metadata is unavailable or too large.");
+            string version=BuildInfo.PublicVersion;
+            if(!Regex.IsMatch(version,@"^\d+\.\d+\.\d+$",RegexOptions.CultureInvariant))
+                throw new InvalidDataException("Current release version is not canonical.");
+            Dictionary<string,object> root=new JavaScriptSerializer().DeserializeObject(json) as Dictionary<string,object>;
+            if(root==null)throw new InvalidDataException("Current release metadata is not an object.");
+            ReleaseUpdateInfo info=new ReleaseUpdateInfo();
+            info.Version=version;
+            info.Tag=Text(root,"tag_name");
+            info.Name=Text(root,"name");
+            info.HtmlUrl=Text(root,"html_url");
+            info.PublishedAt=Text(root,"published_at");
+            object immutable,draft,prerelease;
+            info.Immutable=root.TryGetValue("immutable",out immutable)&&immutable is bool&&(bool)immutable;
+            if(!info.Immutable||
+               !root.TryGetValue("draft",out draft)||!(draft is bool)||(bool)draft||
+               !root.TryGetValue("prerelease",out prerelease)||!(prerelease is bool)||(bool)prerelease)
+                throw new InvalidDataException("Current repair release is not immutable and stable.");
+            info.TagValid=String.Equals(info.Tag,"v"+version,StringComparison.Ordinal);
+            info.ReleaseUrlValid=IsOfficialReleaseUrl(info.HtmlUrl,version);
+            Uri page;
+            if(!info.TagValid||!info.ReleaseUrlValid||
+               !Uri.TryCreate(info.HtmlUrl,UriKind.Absolute,out page)||
+               page.UserInfo.Length>0||!page.IsDefaultPort||page.Query.Length>0||page.Fragment.Length>0)
+                throw new InvalidDataException("Current repair release identity is not canonical.");
+            object rawAssets;
+            System.Collections.IEnumerable assets=root.TryGetValue("assets",out rawAssets)?
+                rawAssets as System.Collections.IEnumerable:null;
+            if(assets==null||assets is string)throw new InvalidDataException("Current release assets are unavailable.");
+            string expectedName=ExpectedSetupAssetName(version);
+            Dictionary<string,object> chosen=null;
+            foreach(object entry in assets)
+            {
+                Dictionary<string,object> asset=entry as Dictionary<string,object>;
+                if(asset==null)throw new InvalidDataException("Current release asset record is invalid.");
+                if(!String.Equals(Text(asset,"name"),expectedName,StringComparison.Ordinal))continue;
+                if(chosen!=null)throw new InvalidDataException("Duplicate canonical repair installer assets.");
+                chosen=asset;
+            }
+            if(chosen==null)throw new InvalidDataException("Exact current repair installer asset is absent.");
+            info.SetupName=Text(chosen,"name");
+            info.SetupUrl=Text(chosen,"browser_download_url");
+            info.SetupDigest=Text(chosen,"digest");
+            object rawSize;
+            long size;
+            try{
+                if(!chosen.TryGetValue("size",out rawSize)||rawSize==null||
+                   rawSize is string||rawSize is bool)
+                    throw new InvalidDataException("Current repair asset length is not numeric.");
+                size=Convert.ToInt64(rawSize,CultureInfo.InvariantCulture);
+            }catch(Exception ex){throw new InvalidDataException("Current repair asset length is invalid.",ex);}
+            info.SetupAssetAvailable=size>=1024&&size<=536870912;
+            info.DigestAvailable=IsStrictSha256Digest(info.SetupDigest);
+            info.SetupUrlValid=IsOfficialSetupUrl(info.SetupUrl,version,expectedName);
+            Uri download;
+            if(!Uri.TryCreate(info.SetupUrl,UriKind.Absolute,out download)||
+               download.UserInfo.Length>0||!download.IsDefaultPort||
+               download.Query.Length>0||download.Fragment.Length>0||
+               !info.SetupAssetAvailable||!info.DigestAvailable||!info.SetupUrlValid)
+                throw new InvalidDataException("Current repair installer is not a canonical SHA-pinned GitHub asset.");
+            info.HasUpdate=false;
+            info.Status="Canonical immutable current-version repair asset verified.";
+            return info;
+        }
+
+        public static ReleaseUpdateInfo CheckCurrentReleaseForRepair()
+        {
+            string version=BuildInfo.PublicVersion;
+            if(!Regex.IsMatch(version,@"^\d+\.\d+\.\d+$",RegexOptions.CultureInvariant))
+                throw new InvalidDataException("Current repair version is not canonical.");
+            string endpoint="https://api.github.com/repos/GOD13emad/TaskbarMonitorEnhanced/releases/tags/v"+version;
+            string response;
+            using(WebClient wc=Client())response=wc.DownloadString(endpoint);
+            return ParseCurrentRepairReleaseMetadata(response);
+        }
+
         private static string Sha256File(string path)
         {
             using(SHA256 sha=SHA256.Create())using(FileStream fs=File.OpenRead(path)){byte[] b=sha.ComputeHash(fs);StringBuilder sb=new StringBuilder();foreach(byte x in b)sb.Append(x.ToString("X2",CultureInfo.InvariantCulture));return sb.ToString();}
@@ -937,7 +1088,22 @@ namespace TaskbarMonitorEnhanced
 
         public static string DownloadAndVerify(ReleaseUpdateInfo info)
         {
-            if(info==null||!info.HasUpdate)throw new InvalidOperationException("No newer public release is selected.");
+            return DownloadAndVerifyStrict(info,false);
+        }
+
+        internal static string DownloadAndVerifyForRepair(ReleaseUpdateInfo info)
+        {
+            if(info==null||info.HasUpdate||
+               !String.Equals(info.Version,BuildInfo.PublicVersion,StringComparison.Ordinal)||
+               !String.Equals(info.Tag,"v"+BuildInfo.PublicVersion,StringComparison.Ordinal))
+                throw new InvalidDataException("Repair would install a different or unverified release version.");
+            return DownloadAndVerifyStrict(info,true);
+        }
+
+        private static string DownloadAndVerifyStrict(ReleaseUpdateInfo info,bool allowSameVersionRepair)
+        {
+            if(info==null||(!info.HasUpdate&&!allowSameVersionRepair))
+                throw new InvalidOperationException("No approved public release is selected.");
             string expectedName=ExpectedSetupAssetName(info.Version);
             if(!info.SetupAssetAvailable||!String.Equals(info.SetupName,expectedName,StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Automatic installation is blocked because the release does not contain the exact expected installer asset "+expectedName+".");
@@ -963,10 +1129,104 @@ namespace TaskbarMonitorEnhanced
             string actual=Sha256File(path);if(!String.Equals(expected,actual,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Installer changed after verification.");
             return actual;
         }
+        // R353: VerifyInstallerBeforeLaunch checks content but deliberately
+        // closes its read handle (the portable selftest still uses that API).
+        // For a real launch, retain a read-only file handle with *no* write or
+        // delete sharing from SHA verification through ShellExecute, so a
+        // same-user update cache writer cannot swap or truncate the leaf in
+        // the verify-to-start interval. This does not prove an atomic guard
+        // against same-user ancestor directory replacement.
+        internal static FileStream OpenPinnedVerifiedUpdateInstaller(string path,string expectedDigest,string expectedUpdatesRoot)
+        {
+            if(!IsStrictSha256Digest(expectedDigest))
+                throw new InvalidDataException("Expected update installer SHA-256 digest is invalid.");
+            if(String.IsNullOrWhiteSpace(path)||!Path.IsPathRooted(path)||
+               String.IsNullOrWhiteSpace(expectedUpdatesRoot)||!Path.IsPathRooted(expectedUpdatesRoot))
+                throw new InvalidDataException("Pinned update installer path is not absolute.");
+            string root=Path.GetFullPath(expectedUpdatesRoot).TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar);
+            string candidate=Path.GetFullPath(path);
+            if(root.StartsWith(@"\\",StringComparison.Ordinal) ||
+               candidate.StartsWith(@"\\",StringComparison.Ordinal) ||
+               !String.Equals(Path.GetDirectoryName(candidate),root,StringComparison.OrdinalIgnoreCase) ||
+               !Regex.IsMatch(Path.GetFileName(candidate),@"^TaskbarMonitorEnhanced_Setup_\d+\.\d+\.\d+\.exe$",
+                              RegexOptions.CultureInvariant|RegexOptions.IgnoreCase))
+                throw new InvalidDataException("Update installer escaped the expected canonical versioned cache file.");
+            // Reject reparse points in existing ancestor directories as well
+            // as the candidate leaf. These are point-in-time checks only.
+            for(string folder=root;!String.IsNullOrWhiteSpace(folder);)
+            {
+                if((File.GetAttributes(folder)&FileAttributes.ReparsePoint)!=0)
+                    throw new InvalidDataException("Update installer ancestor is redirected.");
+                string parent=Path.GetDirectoryName(folder);
+                if(String.IsNullOrEmpty(parent)||String.Equals(parent,folder,StringComparison.OrdinalIgnoreCase))
+                    break;
+                folder=parent;
+            }
+            if((File.GetAttributes(candidate)&FileAttributes.ReparsePoint)!=0)
+                throw new InvalidDataException("Update installer leaf is redirected.");
+            FileStream pinned=null;
+            try
+            {
+                pinned=new FileStream(candidate,FileMode.Open,FileAccess.Read,FileShare.Read);
+                if(pinned.Length<1024 || pinned.Length>536870912)
+                    throw new InvalidDataException("Pinned update installer length is out of bounds.");
+                string actual;
+                using(SHA256 hash=SHA256.Create())
+                {
+                    byte[] bytes=hash.ComputeHash(pinned);
+                    StringBuilder hex=new StringBuilder(bytes.Length*2);
+                    foreach(byte b in bytes)hex.Append(b.ToString("X2",CultureInfo.InvariantCulture));
+                    actual=hex.ToString();
+                }
+                string expected=expectedDigest.Substring(expectedDigest.IndexOf(':')+1).ToUpperInvariant();
+                if(!String.Equals(actual,expected,StringComparison.Ordinal))
+                    throw new InvalidDataException("Pinned update installer changed after download verification.");
+                pinned.Position=0;
+                return pinned;
+            }
+            catch{if(pinned!=null)pinned.Dispose();throw;}
+        }
+
+        internal static ProcessStartInfo BuildPinnedUpdateInstallerProcessInfo(FileStream pinned,string expectedUpdatesRoot)
+        {
+            if(pinned==null||!pinned.CanRead||String.IsNullOrWhiteSpace(expectedUpdatesRoot)||
+               !Path.IsPathRooted(expectedUpdatesRoot))
+                throw new InvalidDataException("Pinned update process handle/root is unavailable.");
+            string root=Path.GetFullPath(expectedUpdatesRoot).TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar);
+            string file=Path.GetFullPath(pinned.Name);
+            if(!String.Equals(Path.GetDirectoryName(file),root,StringComparison.OrdinalIgnoreCase)||
+               !Regex.IsMatch(Path.GetFileName(file),@"^TaskbarMonitorEnhanced_Setup_\d+\.\d+\.\d+\.exe$",
+                              RegexOptions.CultureInvariant|RegexOptions.IgnoreCase))
+                throw new InvalidDataException("Pinned update process escaped its verified cache folder.");
+            ProcessStartInfo psi=new ProcessStartInfo();
+            psi.FileName=file;
+            psi.Arguments=String.Empty;
+            psi.UseShellExecute=true;
+            psi.ErrorDialog=false;
+            return psi;
+        }
+
+        internal static ProcessStartInfo BuildPinnedRepairProcessInfo(FileStream pinned,string expectedUpdatesRoot)
+        {
+            ProcessStartInfo psi=BuildPinnedUpdateInstallerProcessInfo(pinned,expectedUpdatesRoot);
+            if(!psi.UseShellExecute||!String.IsNullOrEmpty(psi.Arguments))
+                throw new InvalidDataException("Repair installer descriptor is not pinned.");
+            psi.Arguments="/repair-sensors";
+            psi.Verb="runas";
+            psi.ErrorDialog=false;
+            return psi;
+        }
+
         public static void StartInstaller(string path,string expectedDigest)
         {
-            string actual=VerifyInstallerBeforeLaunch(path,expectedDigest);
-            ProcessStartInfo psi=new ProcessStartInfo();psi.FileName=path;psi.UseShellExecute=true;Process p=Process.Start(psi);if(p==null)throw new InvalidOperationException("Windows did not start the update installer.");Log.Write("INFO","UPDATE_INSTALLER_STARTED reverifiedSha256="+actual+" path="+path);
+            using(FileStream pinned=OpenPinnedVerifiedUpdateInstaller(path,expectedDigest,AppPaths.Updates))
+            {
+                ProcessStartInfo psi=BuildPinnedUpdateInstallerProcessInfo(pinned,AppPaths.Updates);
+                Process process=Process.Start(psi);
+                if(process==null)throw new InvalidOperationException("Windows did not start the update installer.");
+                string digest=expectedDigest.Substring(expectedDigest.IndexOf(':')+1).ToUpperInvariant();
+                Log.Write("INFO","UPDATE_INSTALLER_STARTED pinnedSha256="+digest+" path="+pinned.Name);
+            }
         }
     }
 
@@ -4444,8 +4704,8 @@ namespace TaskbarMonitorEnhanced
             ToolStripMenuItem diagnostics=new ToolStripMenuItem("Diagnostics...");diagnostics.Click+=delegate{OpenSettings("Diagnostics");};m.Items.Add(diagnostics);
             updateMenuItem=new ToolStripMenuItem("Updates...");updateMenuItem.Click+=delegate{OpenSettings("Updates");};m.Items.Add(updateMenuItem);
             pauseMenuItem=new ToolStripMenuItem("Pause monitoring");pauseMenuItem.Click+=delegate{SetUserTelemetryPaused(!userTelemetryPaused);};m.Items.Add(pauseMenuItem);
-            ToolStripMenuItem taskManager=new ToolStripMenuItem("Open Task Manager");taskManager.Click+=delegate{try{Process.Start(new ProcessStartInfo("taskmgr.exe"){UseShellExecute=true});Log.Write("INFO","TASK_MANAGER_OPEN");}catch(Exception ex){Log.Write("WARN","TASK_MANAGER_OPEN_FAIL "+ex.Message);}};m.Items.Add(taskManager);
-            ToolStripMenuItem logs=new ToolStripMenuItem("Open Logs"); logs.Click+=delegate{try{Process.Start("explorer.exe",AppPaths.Logs);}catch{}}; m.Items.Add(logs);
+            ToolStripMenuItem taskManager=new ToolStripMenuItem("Open Task Manager");taskManager.Click+=delegate{try{Process.Start(WindowsShellCommands.TaskManager());Log.Write("INFO","TASK_MANAGER_OPEN");}catch(Exception ex){Log.Write("WARN","TASK_MANAGER_OPEN_FAIL "+ex.Message);}};m.Items.Add(taskManager);
+            ToolStripMenuItem logs=new ToolStripMenuItem("Open Logs"); logs.Click+=delegate{try{Process.Start(WindowsShellCommands.Explorer(AppPaths.Logs));}catch{}}; m.Items.Add(logs);
             m.Items.Add(new ToolStripSeparator());
             ToolStripMenuItem exit=new ToolStripMenuItem("Exit"); exit.Click+=delegate{UserExitRequested=true;Close();}; m.Items.Add(exit);
             return m;
@@ -7378,14 +7638,14 @@ namespace TaskbarMonitorEnhanced
             diagnosticsText=new TextBox();SetA11y(diagnosticsText,"Diagnostics report","Read-only runtime health and diagnostics report.");diagnosticsText.Location=new Point(24,72);diagnosticsText.Size=new Size(800,390);diagnosticsText.Multiline=true;diagnosticsText.ReadOnly=true;diagnosticsText.ScrollBars=ScrollBars.Both;diagnosticsText.WordWrap=false;diagnosticsText.Font=new Font("Cascadia Mono",9f);diagnostics.Controls.Add(diagnosticsText);
             refreshDiagnostics=new Button();refreshDiagnostics.Text="Refresh health";refreshDiagnostics.Location=new Point(24,24);refreshDiagnostics.Size=new Size(130,34);refreshDiagnostics.Click+=delegate{RefreshDiagnostics();};diagnostics.Controls.Add(refreshDiagnostics);
             saveDiagnostics=new Button();saveDiagnostics.Text="Save report...";saveDiagnostics.Location=new Point(168,24);saveDiagnostics.Size=new Size(130,34);saveDiagnostics.Click+=delegate{SaveDiagnosticsReport();};diagnostics.Controls.Add(saveDiagnostics);
-            openDataFolder=new Button();openDataFolder.Text="Open data folder";openDataFolder.Location=new Point(312,24);openDataFolder.Size=new Size(135,34);openDataFolder.Click+=delegate{try{Process.Start("explorer.exe",AppPaths.Root);}catch{}};diagnostics.Controls.Add(openDataFolder);
+            openDataFolder=new Button();openDataFolder.Text="Open data folder";openDataFolder.Location=new Point(312,24);openDataFolder.Size=new Size(135,34);openDataFolder.Click+=delegate{try{Process.Start(WindowsShellCommands.Explorer(AppPaths.Root));}catch{}};diagnostics.Controls.Add(openDataFolder);
             repairSensors=new Button();repairSensors.Text="Repair protected sensors...";repairSensors.Location=new Point(461,24);repairSensors.Size=new Size(185,34);repairSensors.Click+=delegate{RepairProtectedSensors();};diagnostics.Controls.Add(repairSensors);
             healthBadge=new Label();healthBadge.Location=new Point(24,478);healthBadge.Size=new Size(205,34);healthBadge.TextAlign=ContentAlignment.MiddleCenter;healthBadge.Font=new Font("Segoe UI Semibold",9.3f,FontStyle.Bold);healthBadge.BorderStyle=BorderStyle.FixedSingle;healthBadge.Text="Health: checking...";diagnostics.Controls.Add(healthBadge);
             copyDiagnostics=new Button();copyDiagnostics.Text="Copy diagnostics";copyDiagnostics.Location=new Point(246,478);copyDiagnostics.Size=new Size(135,34);copyDiagnostics.Click+=delegate{CopyDiagnosticsToClipboard();};diagnostics.Controls.Add(copyDiagnostics);
             exportSupportBundle=new Button();exportSupportBundle.Text="Export support ZIP...";exportSupportBundle.Location=new Point(396,478);exportSupportBundle.Size=new Size(165,34);exportSupportBundle.Click+=delegate{ExportSupportBundleZip();};diagnostics.Controls.Add(exportSupportBundle);
             exportSessionCsv=new Button();exportSessionCsv.Text="Export session CSV...";SetA11y(exportSessionCsv,"Export session CSV","Export the bounded in-memory telemetry history for this application session as CSV.");exportSessionCsv.Location=new Point(576,478);exportSessionCsv.Size=new Size(165,34);exportSessionCsv.Click+=delegate{ExportSessionCsvFile();};diagnostics.Controls.Add(exportSessionCsv);
 
-            Button openLog=new Button();openLog.Text="Open Logs";openLog.Location=new Point(24,28);openLog.Width=120;openLog.Click+=delegate{try{Process.Start("explorer.exe",AppPaths.Logs);}catch{}};advanced.Controls.Add(openLog);
+            Button openLog=new Button();openLog.Text="Open Logs";openLog.Location=new Point(24,28);openLog.Width=120;openLog.Click+=delegate{try{Process.Start(WindowsShellCommands.Explorer(AppPaths.Logs));}catch{}};advanced.Controls.Add(openLog);
             resetDefaults=new Button();resetDefaults.Text="Load safe defaults...";resetDefaults.Location=new Point(24,78);resetDefaults.Size=new Size(155,34);resetDefaults.Click+=delegate{ResetControlsToSafeDefaults();};advanced.Controls.Add(resetDefaults);
             Label note=new Label();note.AutoSize=false;note.Location=new Point(24,138);note.Size=new Size(690,300);note.Text="Startup resilience uses dual per-user registration plus continuous low-pressure self-heal. Protected sensors remain process-isolated. Safe reset creates a timestamped config backup, loads defaults into this form, and does not change the running monitor until Save & Apply.";advanced.Controls.Add(note);
 
@@ -7898,26 +8158,59 @@ namespace TaskbarMonitorEnhanced
 
         private void RepairProtectedSensors()
         {
-            try
+            if(MessageBox.Show(
+                "Repair the protected CPU/GPU/storage sensor layer with the exact immutable "+
+                "official "+BuildInfo.PublicVersion+" Setup from GitHub? "+
+                "The installer SHA-256 will be verified immediately before Windows asks for administrator approval.",
+                "Repair protected sensors",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;
+            if(repairSensors!=null){repairSensors.Enabled=false;repairSensors.Text="Verifying official Setup...";}
+            ThreadPool.QueueUserWorkItem(delegate
             {
-                string setup=Path.Combine(AppPaths.Root,"Uninstall.exe");
-                if(!File.Exists(setup))
+                try
                 {
-                    MessageBox.Show("Repair tool was not found. Re-run the latest Taskbar Monitor Enhanced installer.","Repair protected sensors",MessageBoxButtons.OK,MessageBoxIcon.Warning);
-                    return;
+                    ReleaseUpdateInfo release=UpdateManager.CheckCurrentReleaseForRepair();
+                    string verifiedPath=UpdateManager.DownloadAndVerifyForRepair(release);
+                    Ui(delegate
+                    {
+                        try
+                        {
+                            using(FileStream pinned=UpdateManager.OpenPinnedVerifiedUpdateInstaller(
+                                verifiedPath,release.SetupDigest,AppPaths.Updates))
+                            {
+                                ProcessStartInfo psi=UpdateManager.BuildPinnedRepairProcessInfo(pinned,AppPaths.Updates);
+                                using(Process child=Process.Start(psi))
+                                {
+                                    if(child==null)throw new InvalidOperationException("Verified official repair Setup did not launch.");
+                                }
+                                Log.Write("INFO","SENSOR_REPAIR_STARTED immutableVersion="+release.Version+
+                                    " pinnedDigest="+release.SetupDigest);
+                            }
+                        }
+                        catch(Exception ex)
+                        {
+                            Log.Write("WARN","SENSOR_REPAIR_START_FAIL "+ex.Message);
+                            MessageBox.Show("Trusted sensor repair could not start: "+ex.Message+
+                                "\r\nNo local Uninstall.exe was elevated. Use the official immutable GitHub release if repair is needed.",
+                                "Repair protected sensors",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+                        }
+                        finally
+                        {
+                            if(repairSensors!=null){repairSensors.Enabled=true;repairSensors.Text="Repair protected sensors...";}
+                        }
+                    });
                 }
-                if(MessageBox.Show("Repair the protected CPU/GPU/storage sensor layer? Windows will request administrator approval.","Repair protected sensors",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;
-                ProcessStartInfo psi=new ProcessStartInfo();
-                psi.FileName=setup;psi.Arguments="/repair-sensors";psi.UseShellExecute=true;psi.Verb="runas";
-                Process x=Process.Start(psi);
-                if(x==null)throw new InvalidOperationException("Windows did not start the sensor repair tool.");
-                Log.Write("INFO","SENSOR_REPAIR_STARTED");
-            }
-            catch(Exception ex)
-            {
-                Log.Write("WARN","SENSOR_REPAIR_START_FAIL "+ex.Message);
-                MessageBox.Show(ex.Message,"Repair protected sensors",MessageBoxButtons.OK,MessageBoxIcon.Warning);
-            }
+                catch(Exception ex)
+                {
+                    Log.Write("WARN","SENSOR_REPAIR_RELEASE_VERIFY_FAIL "+ex.Message);
+                    Ui(delegate
+                    {
+                        MessageBox.Show("Verified current-version repair Setup is unavailable: "+ex.Message+
+                            "\r\nNo local Uninstall.exe was elevated. Check the official GitHub release page.",
+                            "Repair protected sensors",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+                        if(repairSensors!=null){repairSensors.Enabled=true;repairSensors.Text="Repair protected sensors...";}
+                    });
+                }
+            });
         }
 
         private List<HardwareChoice> ChoicesCpu(){return snapshot.CpuDevices.Select(x=>new HardwareChoice{Id=x.Id,Name=x.Name}).ToList();}
@@ -10286,6 +10579,59 @@ namespace TaskbarMonitorEnhanced
         }
     }
 
+    // R356: the Start-menu repair shortcut invokes Main as an unelevated
+    // application, not the mutable per-user Uninstall.exe with runas.
+    // A separate invocation works even if the monitoring process owns the
+    // regular single-instance mutex. Only verified official Setup requests
+    // native OS administrator consent; this code does not bypass it.
+    internal static class RepairShortcutEntryPoint
+    {
+        internal const string Argument="--repair-sensors";
+
+        internal static bool IsExactInvocation(string[] argv)
+        {
+            return argv!=null&&argv.Length==1&&
+                   String.Equals(argv[0],Argument,StringComparison.Ordinal);
+        }
+
+        internal static int Run()
+        {
+            try
+            {
+                DialogResult answer=MessageBox.Show(
+                    "Download and SHA-256 verify the immutable official "+
+                    BuildInfo.PublicVersion+" Setup from GitHub to repair protected sensors? "+
+                    "Windows may then request administrator approval. "+
+                    "The local Uninstall.exe will NOT be elevated.",
+                    "Repair protected sensors",MessageBoxButtons.YesNo,MessageBoxIcon.Question);
+                if(answer!=DialogResult.Yes)return 0;
+                ReleaseUpdateInfo release=UpdateManager.CheckCurrentReleaseForRepair();
+                string verifiedPath=UpdateManager.DownloadAndVerifyForRepair(release);
+                using(FileStream pinned=UpdateManager.OpenPinnedVerifiedUpdateInstaller(
+                    verifiedPath,release.SetupDigest,AppPaths.Updates))
+                {
+                    ProcessStartInfo psi=UpdateManager.BuildPinnedRepairProcessInfo(pinned,AppPaths.Updates);
+                    using(Process child=Process.Start(psi))
+                    {
+                        if(child==null)
+                            throw new InvalidOperationException("Windows did not start the SHA-verified official repair Setup.");
+                    }
+                    Log.Write("INFO","REPAIR_SHORTCUT_PINNED_OFFICIAL_RELEASE version="+release.Version);
+                }
+                return 0;
+            }
+            catch(Exception ex)
+            {
+                Log.Write("WARN","REPAIR_SHORTCUT_REFUSED "+ex.Message);
+                MessageBox.Show("The verified official repair Setup could not be started: "+
+                    ex.Message+"\r\nNo mutable local uninstaller was elevated. "+
+                    "Use the official GitHub release page for manual review.",
+                    "Repair protected sensors",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+                return 42;
+            }
+        }
+    }
+
     internal static class Program
     {
         [STAThread]
@@ -10387,6 +10733,12 @@ namespace TaskbarMonitorEnhanced
             }
             if(args!=null && args.Length>0 && args[0]=="--startup-contract-selftest")
                 return StartupManager.RunContractSelfTest();
+            // R356: intentional shortcut repair is independent of the
+            // long-lived monitor mutex; extra arguments fail closed.
+            if(args!=null&&args.Length>0&&
+               String.Equals(args[0],RepairShortcutEntryPoint.Argument,StringComparison.Ordinal))
+                return RepairShortcutEntryPoint.IsExactInvocation(args)?
+                    RepairShortcutEntryPoint.Run():41;
             if(StartupManager.IsRecoveryInvocation(args)&&StartupManager.WaitForPrimaryInstanceOrTimeout())return 0;
             bool created;
             using(Mutex mutex=new Mutex(true,@"Local\TaskbarMonitorEnhanced_V1_1_0",out created))

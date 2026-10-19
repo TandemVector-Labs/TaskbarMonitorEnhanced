@@ -3,17 +3,17 @@
   "Project": "TaskbarMonitorEnhanced",
   "AuthorityIndex": "docs/project-control/PROJECT_BRAIN.md",
   "Scope": "Redacted public summary only, not the owner-local authoritative Project Brain. Official single per-user product release accepted under unsigned waiver; machinewide singleton not asserted.",
-  "CurrentEngineeringRevision": "R285",
-  "Status": "PUBLIC_REDACTED_MIRROR_R285_IMMUTABLE_V177_REAL_OWNER_INPLACE_SCOPED_DELIVERED",
-  "UpdatedUtc": "2026-10-16T21:48:03.585645+00:00",
+  "CurrentEngineeringRevision": "R287",
+  "Status": "PUBLIC_REDACTED_R287_IMMUTABLE_V178_OWNER_SOUND_API_SCOPED_DELIVERED",
+  "UpdatedUtc": "2026-10-17T03:56:33.604478+00:00",
   "FinalObjective": "Preserve v1.6 taskbar behavior with user-enabled zero-background Glass Mode, correct Start/Settings/fullscreen handling, safe in-place upgrades, a single per-user installation root, and reliable low-overhead sensors.",
   "CurrentAcceptedBaseline": {
-    "Version": "1.7.7",
-    "ReleaseId": 415382091,
-    "ReleaseURL": "https://github.com/GOD13emad/TaskbarMonitorEnhanced/releases/tag/v1.7.7",
-    "SourceCommit": "dc68cf448173bd0808d1dfa54bc9e9bf7ca20aad",
-    "SetupSHA256": "395AEE56006F55FD5DCCFB52E1519088CE01A10386840D7008C6BA900136A06D",
-    "InstalledMainSHA256": "A6D4BFD00C918C0601A12D185F414E92F2B6A85927042B811537B0BC37606253",
+    "Version": "1.7.8",
+    "ReleaseId": 415448539,
+    "ReleaseURL": "https://github.com/GOD13emad/TaskbarMonitorEnhanced/releases/tag/v1.7.8",
+    "SourceCommit": "9960a06dba606d1c93b8ca2b84e0e3e25ca4f68d",
+    "SetupSHA256": "4DB3C03AC7AB70B3D3123A365C156E71370F0338991B399B99169A4B5B5F8B75",
+    "InstalledMainSHA256": "A3E9ABD7E97655AD6787B71239505F30A7C0350B77F352DE4DE83461CD170D31",
     "PublicAssetCount": 7,
     "InstallerUnsigned": true,
     "PerUserInstall": true,
@@ -24,13 +24,21 @@
     "OwnerApplicationNotificationDispatchLogged": true,
     "ActualOsToastOrSoundProven": false,
     "OwnerLiveV177VersionObserved": true,
-    "MainBuildCI": 38965519302,
-    "NativeHostedActualSetupKillRecoveryCI": 38965519445,
+    "MainBuildCI": 38977412946,
+    "NativeHostedActualSetupKillRecoveryCI": 38977412933,
     "IndependentPublicSevenAssetG16Passed": true,
     "OwnerPerUserUpgradeRealExitZero": true,
     "OwnerOldVersionRecoverable26Files": true,
     "HistoricalRedPixelProofVersion": "1.7.6",
-    "Current177ActualRedPixelsIndependentlyCounted": false
+    "Current177ActualRedPixelsIndependentlyCounted": false,
+    "OwnerLiveV178VersionObserved": true,
+    "OwnerSoundExplicitlyOptedIn": true,
+    "OwnerOneShotSoundPreviewRequested": true,
+    "OwnerActualHotTemperatureWarnings": 26,
+    "OwnerRealSystemSoundApiRequests": 26,
+    "MinimumSoundRequestSpacingMinutes": 10.001,
+    "ActualPhysicalSpeakerHeard": false,
+    "Current178ActualRedPixelsIndependentlyCounted": false
   },
   "Completed": [
     "Seven immutable public v1.7.5 assets independently SHA/Manifest verified (R267)",
@@ -41,16 +49,17 @@
     "R272-R274 semantic Glass red-warning compositor correction across 98 actual bitmap tests; safe official v1.7.5→v1.7.6 transactional update and rollback on two hosted Windows A/B.",
     "R275 immutable public unsigned v1.7.6: one Setup, seven assets independently SHA/manifest verified by live G16; exact merged-main CI and Windows A/B SUCCESS.",
     "R276 owner official same-root 1.7.6 update with private 26-entry preupgrade recovery, real hot CPU Glass 3243 red pixels, Windows notification opt-in plus app dispatch, 10/10 healthy sensors.",
-    "R285 public mirror: v1.7.7 immutable seven assets and exact-source CI, real owner 1.7.6→1.7.7 same-root update, live CPU threshold dispatch, old-version backup; no unproven audio/security/global claims."
+    "R285 public mirror: v1.7.7 immutable seven assets and exact-source CI, real owner 1.7.6→1.7.7 same-root update, live CPU threshold dispatch, old-version backup; no unproven audio/security/global claims.",
+    "R287 public mirror: immutable v1.7.8 and genuine owner upgrade/Glass, 26 paired natural sound API requests with 10-minute cooldown and no logged exception; audible speaker/UI and reporter WinRing0 are external."
   ],
   "Open": [
     "ISSUE6_REPORTER_DRIVER_SHA_AND_INSTALL_ORIGIN_MISSING",
-    "OWNER_APP_OS_NOTIFICATION_BANNER_AND_SOUND_NOT_INDEPENDENTLY_WITNESSED"
+    "OWNER_APP_OS_NOTIFICATION_BANNER_AND_AUDIBLE_SPEAKER_NOT_INDEPENDENTLY_WITNESSED"
   ],
-  "CriticalPath": "Immutable v1.7.7 public source dc68cf4 and seven SHA-verified assets PASS; native Windows A/B actual Setup interruption/recovery and 27-step Build CI PASS; owner same-root per-user 1.7.6 to 1.7.7 real upgrade and live Glass/alert dispatch verified. Reporter Issue #6 and OS audible/visible notification independent witness remain external. Owner excluded physical AC interruption.",
-  "MainBlocker": "No in-scope released app blocker. Reporter-specific WinRing0 source/hash is unavailable (Issue #6); an independent live owner-app OS notification banner/audio witness is also absent. Neither optional global multiuser policy nor waived signing nor excluded AC outage blocks the current per-user release.",
-  "BrainStatus": "PUBLIC_REDACTED_DERIVATIVE_R285_NOT_A_SECOND_OPERATIONAL_BRAIN",
-  "ExactNextAction": "Use the one official immutable v1.7.7 Setup for new per-user installations or supported in-place updates. Never bypass Defender; original reporter WinRing0 driver SHA/download path requested in Issue #6. Verify owner-app OS banner/speaker on a natural threshold event without heating hardware. No physical AC test is required.",
+  "CriticalPath": "Immutable public v1.7.8, source 9960a06dba606d1c93b8ca2b84e0e3e25ca4f68d, seven assets and Build 38977412946 / native Windows A/B 38977412933 all PASS. Owner real one per-user same-root 1.7.7 to 1.7.8 upgrade, zero-alpha Glass and hot red retained, sound manually previewed. New read-only owner log shows 26 genuine temperature warnings paired with 26 Windows Exclamation sound-play API requests with zero exceptions and >=10-minute cooldown. Actual speaker audibility and app-specific OS balloon UI not independently witnessed. WinRing0 reporter Issue #6 requires original file SHA/source; physical AC interruption explicitly out of scope.",
+  "MainBlocker": "No in-scope v1.7.8 build/release/install/API sound request blocker. External reporter WinRing0 Issue #6 and real speaker/OS UI observation remain open. PR #80 CodeQL risk review not merged, no unsupported security conclusion.",
+  "BrainStatus": "PUBLIC_REDACTED_R287_DERIVATIVE_NOT_AN_ACTIVE_OWNER_BRAIN",
+  "ExactNextAction": "Keep official immutable per-user v1.7.8 and sound setting. To assess physical speaker use the deliberate Settings > Alerts > Test warning sound without heating CPU. Get original reporter WinRing0 binary hash and download/install origin for Issue #6. AC test excluded by owner; optional global singleton and signing not release prerequisites.",
   "PublicTracker": "https://github.com/GOD13emad/TaskbarMonitorEnhanced/issues/7",
   "SecurityTracker": "https://github.com/GOD13emad/TaskbarMonitorEnhanced/issues/6",
   "HistoricalR40Record": {
@@ -71,5 +80,12 @@
     "MACHINEWIDE_MULTISUPERUSER_GLOBAL_SINGLETON_NOT_REQUESTED",
     "AUTHENTICODE_PUBLISHER_SIGNING_WAIVED_FOR_UNSIGNED_RELEASE",
     "INDEPENDENT_SECURITY_LAB_CLEARANCE_NOT_CLAIMED"
-  ]
+  ],
+  "HistoricalOfficialV177": {
+    "Version": "1.7.7",
+    "ReleaseId": 415382091,
+    "SourceCommit": "dc68cf448173bd0808d1dfa54bc9e9bf7ca20aad",
+    "SetupSHA256": "395AEE56006F55FD5DCCFB52E1519088CE01A10386840D7008C6BA900136A06D",
+    "MainSHA256": "A6D4BFD00C918C0601A12D185F414E92F2B6A85927042B811537B0BC37606253"
+  }
 }

@@ -9,6 +9,11 @@ using System.Globalization;
 using System.IO.Compression;
 using System.Reflection;
 using System.Security.Principal;
+using System.IO.Pipes;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+using System.Security.AccessControl;
+using System.Threading.Tasks;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -309,8 +314,19 @@ internal static partial class SetupProgram
             throw new InvalidDataException("Trusted native helper literal not balanced.");
         return compact.ToString();
     }
+
+    // Compatibility-only builder for pure non-launching tests; live runas passes a fresh pipe.
     static string BuildElevatedHelperCommand(string mode,string payload,string appRoot,string user)
     {
+        return BuildElevatedHelperCommandWithPipe(mode,payload,appRoot,user,
+            "tbme_sensor_fixture_nonruntime","00000000000000000000000000000000");
+    }
+    static string BuildElevatedHelperCommandWithPipe(string mode,string payload,string appRoot,string user,
+        string pipeName,string pipeNonce)
+    {
+        if(!Regex.IsMatch(pipeName,@"^tbme_sensor_(?:[0-9a-f]{32}|fixture_nonruntime)$") ||
+           !Regex.IsMatch(pipeNonce,@"^[0-9a-f]{32}$"))
+            throw new InvalidDataException("Sensor status channel parameters invalid.");
         if(mode!="Install" && mode!="Uninstall")
             throw new InvalidDataException("Unexpected elevated sensor mode.");
         string brokerHash=Sha256Resource("Payload.TaskbarMonitorSensorBroker.exe");
@@ -342,13 +358,17 @@ internal static partial class SetupProgram
           "$ErrorActionPreference='Stop'\n"+
           "$blob=[Convert]::FromBase64String('"+packed+"')\n"+
           "$ms=[IO.MemoryStream]::new($blob)\n"+
-          "$gzip=[IO.Compression.GZipStream]::new($ms,[IO.Compression.CompressionMode]::Decompress)\n"+
-          "$reader=[IO.StreamReader]::new($gzip,[Text.Encoding]::UTF8)\n"+
-          "try{$code=$reader.ReadToEnd()}finally{$reader.Dispose();$gzip.Dispose();$ms.Dispose()}\n"+
-          "$payload=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"+Base64Utf8Argument(payload)+"'))\n"+
-          "$app=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"+Base64Utf8Argument(appRoot)+"'))\n"+
-          "$user=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"+Base64Utf8Argument(user)+"'))\n"+
-          "& ([ScriptBlock]::Create($code)) -Mode '"+mode+"' -PayloadDir $payload -AppRoot $app -UserId $user -ExpectedBrokerSHA256 '"+brokerHash+"' -ExpectedSupervisorSHA256 '"+supervisorHash+"' -ExpectedBackendZipSHA256 '"+backendZipHash+"'\n";
+          "$gzip=[IO.Compression.GZipStream]::new($ms,[IO.Compression.CompressionMode]0)\n"+
+          "$reader=[IO.StreamReader]::new($gzip)\n"+
+          "try{$code=$reader.ReadToEnd()}finally{$reader.Close()}\n"+
+          "function d($s){[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($s))}\n"+
+          "$p=d('"+Base64Utf8Argument(payload)+"')\n"+
+          "$a=d('"+Base64Utf8Argument(appRoot)+"')\n"+
+          "$u=d('"+Base64Utf8Argument(user)+"')\n"+
+          // These are strict [a-f0-9] + static-prefix allowlisted values, not untrusted scripts.
+          "$q='"+pipeName+"'\n"+
+          "$n='"+pipeNonce+"'\n"+
+          "& ([ScriptBlock]::Create($code)) -Mode '"+mode+"' -PayloadDir $p -AppRoot $a -UserId $u -ExpectedBrokerSHA256 '"+brokerHash+"' -ExpectedSupervisorSHA256 '"+supervisorHash+"' -ExpectedBackendZipSHA256 '"+backendZipHash+"' -StatusPipe $q -StatusNonce $n\n";
         string encoded=Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
         // Preserve the established UTF-16 EncodedCommand path when it fits.
         // Windows Process creation caps the entire command line at 32,767 chars.
@@ -393,55 +413,316 @@ internal static partial class SetupProgram
     // inspected in disposable Windows without granting UAC or starting it.
     static ProcessStartInfo BuildElevatedSensorProcessInfo(string mode,string payload,string appRoot,string user)
     {
+        return BuildElevatedSensorProcessInfoWithPipe(mode,payload,appRoot,user,
+            "tbme_sensor_fixture_nonruntime","00000000000000000000000000000000");
+    }
+    static ProcessStartInfo BuildElevatedSensorProcessInfoWithPipe(string mode,string payload,string appRoot,string user,
+        string pipeName,string pipeNonce)
+    {
         ProcessStartInfo psi=new ProcessStartInfo();
         psi.FileName=TrustedSystemPowerShellPath();
         psi.WorkingDirectory=Path.GetDirectoryName(psi.FileName);
-        psi.Arguments=BuildElevatedHelperCommand(mode,payload,appRoot,user);
+        psi.Arguments=BuildElevatedHelperCommandWithPipe(mode,payload,appRoot,user,pipeName,pipeNonce);
         psi.UseShellExecute=true;
         psi.Verb="runas";
         return psi;
     }
 
+
+    // R080 (DRAFT): asInvoker Setup owns result/log persistence, not runas.
+    // No user-tree mutation is performed by this object until OS child identity
+    // and a one-shot authenticated pipe result have been validated.
+    sealed class SensorStatusReceiver : IDisposable
+    {
+        const int MaxWireBytes=65000;
+        [DllImport("kernel32.dll",SetLastError=true)]
+        static extern bool GetNamedPipeClientProcessId(SafePipeHandle handle,out uint pid);
+        readonly NamedPipeServerStream stream;
+        readonly IAsyncResult connection;
+        readonly string nonce;
+        Task<string> greeting, frame;
+        bool connected, acknowledged;
+        string message;
+        public readonly string Name;
+        public string Nonce {get {return nonce;}}
+        public bool HasResult {get {return message!=null;}}
+
+        static string BoundedLine(Stream input,int max)
+        {
+            using(MemoryStream buffer=new MemoryStream())
+            {
+                for(int i=0;i<=max;i++)
+                {
+                    int b=input.ReadByte();
+                    if(b<0)throw new IOException("Sensor IPC channel ended without result.");
+                    if(b==10)return new UTF8Encoding(false,true).GetString(buffer.ToArray());
+                    if(i==max)throw new InvalidDataException("Sensor IPC frame over limit.");
+                    buffer.WriteByte((byte)b);
+                }
+            }
+            throw new InvalidDataException("Sensor IPC frame never terminated.");
+        }
+
+        public SensorStatusReceiver()
+        {
+            Name="tbme_sensor_"+Guid.NewGuid().ToString("N");
+            nonce=Guid.NewGuid().ToString("N");
+            PipeSecurity acl=new PipeSecurity();
+            acl.SetAccessRuleProtection(true,false);
+            SecurityIdentifier current=WindowsIdentity.GetCurrent().User;
+            if(current==null)throw new InvalidOperationException("Requesting user SID unavailable.");
+            acl.AddAccessRule(new PipeAccessRule(current,PipeAccessRights.FullControl,AccessControlType.Allow));
+            // R305 requires the elevated Helper's effective account SID to
+            // equal this requesting user SID, including under runas / UAC.
+            // A different administrator account MUST fail closed. Never allow
+            // all Authenticated Users to claim the one-instance IPC slot.
+            // Kernel client PID, live process/session and nonce are separately checked.
+            stream=new NamedPipeServerStream(Name,PipeDirection.InOut,1,
+                PipeTransmissionMode.Byte,PipeOptions.Asynchronous,4096,4096,acl);
+            connection=stream.BeginWaitForConnection(null,null);
+        }
+
+        public void Poll(Process child)
+        {
+            if(!connected && connection.IsCompleted)
+            {
+                stream.EndWaitForConnection(connection);
+                if(child==null || child.HasExited)
+                    throw new InvalidDataException("Sensor IPC connected without a live expected child.");
+                uint peer;
+                if(!GetNamedPipeClientProcessId(stream.SafePipeHandle,out peer))
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                if(peer!=(uint)child.Id || child.SessionId!=Process.GetCurrentProcess().SessionId)
+                    throw new InvalidDataException("Sensor IPC client OS process identity mismatch.");
+                connected=true;
+                greeting=Task.Factory.StartNew<string>(()=>BoundedLine(stream,96));
+            }
+            if(connected && !acknowledged && greeting.IsCompleted)
+            {
+                if(!String.Equals(greeting.GetAwaiter().GetResult(),"HELLO|"+nonce,StringComparison.Ordinal))
+                    throw new InvalidDataException("Sensor IPC HELLO nonce mismatch.");
+                byte[] ack=Encoding.UTF8.GetBytes("ACK|"+nonce+"\n");
+                stream.Write(ack,0,ack.Length);
+                stream.Flush();
+                acknowledged=true;
+                frame=Task.Factory.StartNew<string>(()=>BoundedLine(stream,MaxWireBytes));
+            }
+            if(acknowledged && message==null && frame.IsCompleted)
+                message=frame.GetAwaiter().GetResult();
+        }
+
+        public void PersistAsInvoker()
+        {
+            PersistToUserRoot(AppRoot);
+        }
+
+        // Kept internal for the exact native Windows regression to exercise
+        // the *same* persistence logic on a new disposable test-owned directory.
+        // The production asInvoker caller always uses its real AppRoot.
+
+        // R090 strict, bounded JSON contract. The transport authenticates a
+        // peer/process/nonce, NOT the semantic contents of its JSON message.
+        // Only a flat object with all source-owned typed fields can ever be
+        // stored as a normal user's sensor status.
+        static void ValidateSensorStatusJson(string json)
+        {
+            var schema=new Dictionary<string,char>(StringComparer.Ordinal)
+            {
+                {"Status",'s'},{"Message",'s'},{"PawnIOStatus",'s'},
+                {"PawnIOExitCode",'i'},{"RebootRequired",'b'},
+                {"TaskInstalled",'b'},{"SensorHealthy",'b'},
+                {"SupervisorHealthy",'b'},{"CpuTransportHealthy",'b'},
+                {"GpuTransportHealthy",'b'},{"StorageTransportHealthy",'b'},
+                {"CpuDataAvailable",'b'},{"Architecture",'s'},
+                {"RollbackPerformed",'b'},{"RollbackSucceeded",'b'},
+                {"PreviousSensorLayerPresent",'b'},{"Time",'s'},{"LogPath",'s'}
+            };
+            if(json==null || json.Length>10000)throw new InvalidDataException("Sensor JSON too large.");
+            // No external JSON package / new assembly dependency: exact
+            // PowerShell ConvertTo-Json flat schema, RFC-style JSON string
+            // escaping, and nonexponential bounded field tokenization.
+            const string member=@"\A\s*""(?<name>[A-Za-z][A-Za-z0-9]*)""\s*:\s*(?<value>""(?:[^""\\\u0000-\u001F]|\\(?:[""\\/bfnrt]|u[0-9a-fA-F]{4}))*""|true|false|null|-?(?:0|[1-9][0-9]*))\s*";
+            int pos=0;
+            Action skip=()=>{while(pos<json.Length && (json[pos]==' ' || json[pos]=='\t' || json[pos]=='\r' || json[pos]=='\n'))pos++;};
+            skip();
+            if(pos>=json.Length || json[pos++]!='{')throw new InvalidDataException("Sensor JSON must be an object.");
+            var seen=new HashSet<string>(StringComparer.Ordinal);
+            var values=new Dictionary<string,string>(StringComparer.Ordinal);
+            while(true)
+            {
+                skip();
+                Match field=Regex.Match(json.Substring(pos),member,RegexOptions.CultureInvariant,
+                                        TimeSpan.FromMilliseconds(600));
+                if(!field.Success)throw new InvalidDataException("Invalid sensor JSON field syntax.");
+                string key=field.Groups["name"].Value;
+                string value=field.Groups["value"].Value;
+                char kind;
+                if(!schema.TryGetValue(key,out kind) || !seen.Add(key))
+                    throw new InvalidDataException("Unknown or repeated sensor JSON field.");
+                bool quoted=value.Length>=2 && value[0]=='"' && value[value.Length-1]=='"';
+                if(kind=='s' && !quoted)throw new InvalidDataException("Sensor string field not quoted.");
+                if(kind=='b' && value!="true" && value!="false")
+                    throw new InvalidDataException("Sensor boolean field invalid.");
+                if(kind=='i' && value!="null")
+                {
+                    int number;
+                    if(!Int32.TryParse(value,NumberStyles.AllowLeadingSign,CultureInfo.InvariantCulture,out number))
+                        throw new InvalidDataException("Sensor numeric field invalid.");
+                }
+                values.Add(key,value);
+                pos+=field.Length;
+                skip();
+                if(pos>=json.Length)throw new InvalidDataException("Truncated sensor JSON object.");
+                if(json[pos]==','){pos++;continue;}
+                if(json[pos]=='}'){pos++;break;}
+                throw new InvalidDataException("Invalid sensor JSON object separator.");
+            }
+            skip();
+            if(pos!=json.Length || seen.Count!=schema.Count)
+                throw new InvalidDataException("Sensor JSON fields incomplete or extra data.");
+            // Status is canonical, unescaped ASCII; ambiguous encodings
+            // cannot silently claim a different product health state.
+            string status=values["Status"];
+            switch(status)
+            {
+                case "\"READY\"":
+                    if(values["SensorHealthy"]!="true" || values["SupervisorHealthy"]!="true" ||
+                       values["RebootRequired"]!="false")
+                        throw new InvalidDataException("READY status contradicts sensor health.");
+                    break;
+                case "\"REBOOT_REQUIRED\"":
+                    if(values["RebootRequired"]!="true")
+                        throw new InvalidDataException("Reboot status has no reboot flag.");
+                    break;
+                case "\"DEGRADED\"":
+                case "\"DEGRADED_DATA\"":
+                case "\"DEGRADED_ROLLED_BACK\"":
+                case "\"DEGRADED_ROLLBACK_FAILED\"":
+                case "\"DEGRADED_OTHER_USER_SENSOR_LAYER_PRESERVED\"":
+                case "\"DEGRADED_PREVIOUS_LAYER_RESTORED\"":
+                case "\"DEGRADED_ROLLBACK_RECOVERY_REQUIRED\"":
+                case "\"UNAVAILABLE\"":
+                case "\"UNINSTALLED\"":
+                case "\"UNINSTALL_WARNING\"":
+                    break;
+                default:
+                    throw new InvalidDataException("Unknown sensor status value.");
+            }
+            // R350: both actual cold-recovery outputs from the PE Helper
+            // are degraded, non-healthy terminal statuses. An authenticated
+            // peer must not claim recovery completed while reporting READY
+            // health or a scheduled-task installation to the normal user.
+            if((status=="\"DEGRADED_PREVIOUS_LAYER_RESTORED\"" ||
+                status=="\"DEGRADED_ROLLBACK_RECOVERY_REQUIRED\"") &&
+               (values["SensorHealthy"]!="false" ||
+                values["TaskInstalled"]!="false" ||
+                values["RebootRequired"]!="false"))
+                throw new InvalidDataException("Recovery status contradicts sensor health.");
+
+            if(values["Message"]=="\"\"" || values["Architecture"]=="\"\"" ||
+               values["Time"]=="\"\"" || values["LogPath"]=="\"\"")
+                throw new InvalidDataException("Mandatory sensor metadata empty.");
+            if(status=="\"DEGRADED_ROLLED_BACK\"" &&
+               (values["RollbackPerformed"]!="true" || values["RollbackSucceeded"]!="true"))
+                throw new InvalidDataException("Rollback success result inconsistent.");
+            if(status=="\"DEGRADED_ROLLBACK_FAILED\"" && values["RollbackPerformed"]!="true")
+                throw new InvalidDataException("Rollback failure status inconsistent.");
+        }
+
+        internal void PersistToUserRoot(string userRoot)
+        {
+            if(String.IsNullOrWhiteSpace(userRoot) || !Path.IsPathRooted(userRoot))
+                throw new InvalidDataException("Sensor status destination root invalid.");
+            string canonical=Path.GetFullPath(userRoot).TrimEnd(Path.DirectorySeparatorChar);
+            if(canonical.Length<4)
+                throw new InvalidDataException("Sensor status destination root unsafe.");
+            if(message==null)throw new InvalidDataException("No verified sensor status frame.");
+            string[] parts=message.Split('|');
+            if(parts.Length!=4 || parts[0]!="TBME80" ||
+               !String.Equals(parts[1],nonce,StringComparison.Ordinal))
+                throw new InvalidDataException("Sensor IPC result schema or nonce mismatch.");
+            string json=new UTF8Encoding(false,true).GetString(Convert.FromBase64String(parts[2]));
+            string logs=new UTF8Encoding(false,true).GetString(Convert.FromBase64String(parts[3]));
+            if(logs.Length>25000)
+                throw new InvalidDataException("Sensor IPC log exceeds size limit.");
+            ValidateSensorStatusJson(json);
+            string logRoot=Path.Combine(canonical,"Logs");
+            Directory.CreateDirectory(logRoot);
+            if(logs.Length>0)
+                File.AppendAllText(Path.Combine(logRoot,"sensor_install.log"),logs+"\n",Encoding.UTF8);
+            File.WriteAllText(Path.Combine(logRoot,"sensor_install_result.json"),json,Encoding.UTF8);
+        }
+
+        public void Dispose() {stream.Dispose();}
+    }
+
+    // Uses exactly one OS-attested pipe client for this new UAC child. On
+    // cancellation/spoof/transport fault fail closed; never ask runas to write
+    // status into the calling user's reparse-mutable AppData.
+
     static int ElevatedHelper(string mode,string payload,string appRoot,string user,int timeoutMs)
     {
-        ProcessStartInfo psi=BuildElevatedSensorProcessInfo(mode,payload,appRoot,user);
-
-        Process elevated=null;
-        Exception launchError=null;
-        ManualResetEvent launchFinished=new ManualResetEvent(false);
-        Thread launchThread=new Thread(new ThreadStart(delegate{
-            try{elevated=Process.Start(psi);}
-            catch(Exception ex){launchError=ex;}
-            finally{try{launchFinished.Set();}catch{}}
-        }));
-        launchThread.IsBackground=true;
-        try{launchThread.SetApartmentState(ApartmentState.STA);}catch{}
-
-        DateTime overallDeadline=DateTime.UtcNow.AddMilliseconds(timeoutMs);
-        launchThread.Start();
-
-        int launchBudget=Math.Min(30000,Math.Max(1000,timeoutMs));
-        DateTime launchDeadline=DateTime.UtcNow.AddMilliseconds(launchBudget);
-        while(!launchFinished.WaitOne(100) && DateTime.UtcNow<launchDeadline)
-            Application.DoEvents();
-
-        if(!launchFinished.WaitOne(0))
-            return 125;
-
-        if(launchError!=null)
-            throw new InvalidOperationException("Could not start protected-sensor helper.",launchError);
-        if(elevated==null)
-            throw new InvalidOperationException("Could not start protected-sensor helper.");
-
-        while(!elevated.HasExited && DateTime.UtcNow<overallDeadline){
-            Application.DoEvents();
-            Thread.Sleep(100);
+        using(SensorStatusReceiver channel=new SensorStatusReceiver())
+        {
+            ProcessStartInfo psi=BuildElevatedSensorProcessInfoWithPipe(
+                mode,payload,appRoot,user,channel.Name,channel.Nonce);
+            Process elevated=null;
+            Exception launchError=null;
+            using(ManualResetEvent launchFinished=new ManualResetEvent(false))
+            {
+                Thread launchThread=new Thread(new ThreadStart(delegate {
+                    try {elevated=Process.Start(psi);}
+                    catch(Exception ex) {launchError=ex;}
+                    finally {try{launchFinished.Set();}catch{}}
+                }));
+                launchThread.IsBackground=true;
+                try {launchThread.SetApartmentState(ApartmentState.STA);}catch{}
+                DateTime deadline=DateTime.UtcNow.AddMilliseconds(timeoutMs);
+                launchThread.Start();
+                int launchBudget=Math.Min(30000,Math.Max(1000,timeoutMs));
+                DateTime launchDeadline=DateTime.UtcNow.AddMilliseconds(launchBudget);
+                while(!launchFinished.WaitOne(100) && DateTime.UtcNow<launchDeadline)
+                    Application.DoEvents();
+                if(!launchFinished.WaitOne(0))return 125;
+                if(launchError!=null)
+                    throw new InvalidOperationException("Could not launch protected sensor helper.",launchError);
+                if(elevated==null)
+                    throw new InvalidOperationException("Protected sensor helper process unavailable.");
+                try
+                {
+                    DateTime exitSeen=DateTime.MaxValue;
+                    while(DateTime.UtcNow<deadline)
+                    {
+                        channel.Poll(elevated);
+                        if(elevated.HasExited)
+                        {
+                            if(channel.HasResult)break;
+                            if(exitSeen==DateTime.MaxValue)
+                                exitSeen=DateTime.UtcNow.AddSeconds(3);
+                            if(DateTime.UtcNow>=exitSeen)break;
+                        }
+                        Application.DoEvents();
+                        Thread.Sleep(75);
+                    }
+                    if(!elevated.HasExited)
+                    {
+                        try{elevated.Kill();}catch{}
+                        return 124;
+                    }
+                    if(channel.HasResult)channel.PersistAsInvoker();
+                    else if(elevated.ExitCode==0)
+                        throw new InvalidDataException("Protected sensor helper ended without authenticated status.");
+                    return elevated.ExitCode;
+                }
+                catch
+                {
+                    // Only the newly launched Helper owned by this Setup is stopped.
+                    if(!elevated.HasExited){try{elevated.Kill();}catch{}}
+                    throw;
+                }
+                finally {elevated.Dispose();}
+            }
         }
-        if(!elevated.HasExited){
-            try{elevated.Kill();}catch{}
-            return 124;
-        }
-        return elevated.ExitCode;
     }
 
     // R323: remove only shortcuts that still point at this product and retain
@@ -454,7 +735,7 @@ internal static partial class SetupProgram
            !String.Equals(Path.GetExtension(path),".lnk",StringComparison.OrdinalIgnoreCase))
             return false;
         string args=expectedArguments??"";
-        if(args!="" && args!="/repair-sensors" && args!="--startup-recovery")
+        if(args!="" && args!="/repair-sensors" && args!="--repair-sensors" && args!="--startup-recovery")
             return false;
         string link=Path.GetFullPath(path);
         string target=Path.GetFullPath(expectedTarget);
@@ -578,13 +859,38 @@ internal static partial class SetupProgram
                 "Taskbar Monitor Enhanced Startup Recovery.lnk"));
     }
 
+    // R091: system Unicode IShellLinkW; never stage or execute a user-writable
+    // PowerShell script just to create a shortcut. No PATH command lookup,
+    // ExecutionPolicy Bypass, COM WScript.Shell ANSI filename fallback or UAC.
+    [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface ShortcutShellLinkW {
+      void GetPath([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder path,int n,IntPtr findData,uint flags);
+      void GetIDList(out IntPtr ppidl);
+      void SetIDList(IntPtr pidl);
+      void GetDescription([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder description,int len);
+      void SetDescription([MarshalAs(UnmanagedType.LPWStr)]string desc);
+      void GetWorkingDirectory([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder dir,int len);
+      void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)]string dir);
+      void GetArguments([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder args,int len);
+      void SetArguments([MarshalAs(UnmanagedType.LPWStr)]string args);
+      void GetHotkey(out short hotkey);
+      void SetHotkey(short hotkey);
+      void GetShowCmd(out int style);
+      void SetShowCmd(int style);
+      void GetIconLocation([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder path,int len,out int index);
+      void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)]string path,int index);
+      void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)]string path,uint reserved);
+      void Resolve(IntPtr hwnd,uint flags);
+      void SetPath([MarshalAs(UnmanagedType.LPWStr)]string path);
+    }
+
     static void Shortcut(string path,string target)
     {
         Shortcut(path,target,"","Live system monitor integrated into the Windows taskbar");
     }
 
-    // R318: WScript.Shell COM is invoked directly inside the Setup PE.
-    // Never generate or execute writable Temp scripts to create shortcuts.
+    // R318/R091: create shortcuts with the system Unicode ShellLink COM API.
+    // Do not execute a writable Temp script or resolve a PowerShell binary via PATH.
     static void Shortcut(string path,string target,string arguments,string description)
     {
         if(String.IsNullOrWhiteSpace(path) || String.IsNullOrWhiteSpace(target) ||
@@ -602,37 +908,102 @@ internal static partial class SetupProgram
             throw new IOException("Shortcut destination is a reparse point.");
         // Refuse an unexpected same-name shortcut before COM Save can overwrite it.
         AssertOwnedOrAbsentShortcut(linkPath,targetPath,arguments);
-        Type shellType=Type.GetTypeFromProgID("WScript.Shell",true);
-        object shell=null;
-        object shortcut=null;
+        object com=null;
         try
         {
-            shell=Activator.CreateInstance(shellType);
-            shortcut=shell.GetType().InvokeMember("CreateShortcut",
-                BindingFlags.InvokeMethod,null,shell,new object[]{linkPath});
-            if(shortcut==null)
-                throw new InvalidOperationException("Windows Script Host did not create a shortcut object.");
-            Type shortcutType=shortcut.GetType();
-            BindingFlags set=BindingFlags.SetProperty;
-            shortcutType.InvokeMember("TargetPath",set,null,shortcut,new object[]{targetPath});
-            shortcutType.InvokeMember("Arguments",set,null,shortcut,new object[]{arguments??""});
-            shortcutType.InvokeMember("WorkingDirectory",set,null,shortcut,new object[]{AppRoot});
-            shortcutType.InvokeMember("IconLocation",set,null,shortcut,new object[]{AppExe+",0"});
-            shortcutType.InvokeMember("Description",set,null,shortcut,new object[]{description??""});
-            shortcutType.InvokeMember("WindowStyle",set,null,shortcut,new object[]{1});
-            // Recheck immediately before COM Save: fail closed if another
-            // same-name shortcut appeared while its object was prepared.
+            // System-registered Windows ShellLink COM CLSID; use the Unicode
+            // IUnknown vtable, not WScript.Shell's legacy path handling.
+            Type clsid=Type.GetTypeFromCLSID(
+                new Guid("00021401-0000-0000-C000-000000000046"),true);
+            com=Activator.CreateInstance(clsid);
+            ShortcutShellLinkW link=(ShortcutShellLinkW)com;
+            link.SetPath(targetPath);
+            link.SetArguments(arguments??"");
+            link.SetWorkingDirectory(AppRoot);
+            link.SetDescription(description??"");
+            link.SetIconLocation(AppExe,0);
+            link.SetShowCmd(1);
+            // R324/R333: foreign, dangling and occupied destinations fail closed.
+            // This is same-user protection, not a guarantee against atomic rename races.
             AssertOwnedOrAbsentShortcut(linkPath,targetPath,arguments);
-            shortcutType.InvokeMember("Save",BindingFlags.InvokeMethod,null,shortcut,new object[0]);
-            if(!File.Exists(linkPath))
-                throw new IOException("Windows Script Host did not persist the shortcut.");
+            ((System.Runtime.InteropServices.ComTypes.IPersistFile)com).Save(linkPath,true);
+            if(!File.Exists(linkPath))throw new IOException("Shortcut creation failed.");
         }
         finally
         {
-            if(shortcut!=null && System.Runtime.InteropServices.Marshal.IsComObject(shortcut))
-                System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut);
-            if(shell!=null && System.Runtime.InteropServices.Marshal.IsComObject(shell))
-                System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell);
+            if(com!=null && Marshal.IsComObject(com))
+                Marshal.FinalReleaseComObject(com);
+        }
+    }
+
+    // R357: upgrading an explicitly verified older release may encounter
+    // its genuine Start-menu Repair shortcut. Replace ONLY the exact old
+    // Setup /repair-sensors link with the asInvoker Main --repair-sensors link.
+    // The original bytes are backed up on the same volume for a bounded
+    // rollback. A foreign shortcut (even with this filename) is untouched.
+    // As with other same-user shortcut guards, this is not an atomic defence
+    // against concurrent replacement of parent directories by that user.
+    static bool MigrateOwnedLegacyRepairShortcut(string shortcutPath,string legacySetup,string currentMain)
+    {
+        if(String.IsNullOrWhiteSpace(shortcutPath)||!Path.IsPathRooted(shortcutPath)||
+           !String.Equals(Path.GetExtension(shortcutPath),".lnk",StringComparison.OrdinalIgnoreCase)||
+           String.IsNullOrWhiteSpace(legacySetup)||!Path.IsPathRooted(legacySetup)||
+           String.IsNullOrWhiteSpace(currentMain)||!Path.IsPathRooted(currentMain))
+            throw new InvalidDataException("Repair migration path tuple is invalid.");
+        string link=Path.GetFullPath(shortcutPath);
+        string oldExe=Path.GetFullPath(legacySetup);
+        string main=Path.GetFullPath(currentMain);
+        string parent=Path.GetDirectoryName(link);
+        if(String.IsNullOrWhiteSpace(parent)||!Directory.Exists(parent)||
+           (File.GetAttributes(parent)&FileAttributes.ReparsePoint)!=0)
+            throw new InvalidDataException("Repair migration shortcut directory is unavailable or redirected.");
+        if(!ShortcutNameOccupied(link))return true; // User intentionally has no Repair link.
+        if(IsOwnedShortcut(link,main,"--repair-sensors"))return true;
+        if(!IsOwnedShortcut(link,oldExe,"/repair-sensors"))return false; // FOREIGN, untouched.
+        string digest=Sha256File(link);
+        string unique=Guid.NewGuid().ToString("N");
+        string staged=Path.Combine(parent,".TBME_repair_next_"+unique+".lnk");
+        string backup=Path.Combine(parent,".TBME_repair_original_"+unique+".bak");
+        if(ShortcutNameOccupied(staged)||File.Exists(backup)||Directory.Exists(backup))
+            throw new IOException("Repair migration collided with a preexisting file.");
+        bool replaced=false;
+        try
+        {
+            Shortcut(staged,main,"--repair-sensors",
+                     "Repair using verified immutable official Setup (administrator consent required)");
+            if(!IsOwnedShortcut(staged,main,"--repair-sensors")||
+               !IsOwnedShortcut(link,oldExe,"/repair-sensors")||
+               !String.Equals(Sha256File(link),digest,StringComparison.Ordinal))
+                throw new IOException("Repair shortcut changed before controlled migration.");
+            // File.Replace on a single directory/volume creates an original
+            // backup, unlike deleting the old link before creating the new.
+            File.Replace(staged,link,backup,false);
+            replaced=true;
+            if(!IsOwnedShortcut(link,main,"--repair-sensors")||!File.Exists(backup)||
+               (File.GetAttributes(backup)&FileAttributes.ReparsePoint)!=0||
+               !String.Equals(Sha256File(backup),digest,StringComparison.Ordinal))
+                throw new IOException("Repair shortcut migration postcondition failed.");
+            File.Delete(backup);
+            if(File.Exists(backup))
+                throw new IOException("Repair migration backup could not be retired.");
+            return true;
+        }
+        catch
+        {
+            // Only a proven owned replacement and proven original backup
+            // qualify for a rollback. Otherwise preserve the unexpected
+            // content rather than deleting another owner's shortcut.
+            if(replaced&&File.Exists(backup)&&
+               (File.GetAttributes(backup)&FileAttributes.ReparsePoint)==0&&
+               IsOwnedShortcut(link,main,"--repair-sensors")&&
+               String.Equals(Sha256File(backup),digest,StringComparison.Ordinal))
+                File.Replace(backup,link,null,false);
+            throw;
+        }
+        finally
+        {
+            if(File.Exists(staged)&&IsOwnedShortcut(staged,main,"--repair-sensors"))
+                File.Delete(staged);
         }
     }
 
@@ -1057,7 +1428,7 @@ internal static partial class SetupProgram
         string startLink=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),Product+".lnk");
         string repairLink=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),Product+" - Repair Hardware Sensors.lnk");
         Shortcut(startLink,AppExe);
-        Shortcut(repairLink,uninstaller,"/repair-sensors","Repair or retry Taskbar Monitor Enhanced hardware sensors");
+        Shortcut(repairLink,AppExe,"--repair-sensors","Repair using verified immutable official Setup (administrator consent required)");
         if(desktop)Shortcut(desktopLink,AppExe);
         // Fresh install with desktop disabled does not touch any existing link.
 
@@ -1264,7 +1635,11 @@ foreach($dir in ($dirs|Sort-Object Length -Descending)){
 
         try{DeleteOwnedShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),Product+".lnk"),AppExe,"");}catch{}
         try{DeleteOwnedShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),Product+".lnk"),AppExe,"");}catch{}
-        try{DeleteOwnedShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),Product+" - Repair Hardware Sensors.lnk"),Path.Combine(AppRoot,"Uninstall.exe"),"/repair-sensors");}catch{}
+        // R356: either valid historical Repair shortcut layout is product-owned.
+        // Do not delete or overwrite a foreign same-name shortcut.
+        string repairShortcut=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),Product+" - Repair Hardware Sensors.lnk");
+        try{DeleteOwnedShortcut(repairShortcut,AppExe,"--repair-sensors");}catch{}
+        try{DeleteOwnedShortcut(repairShortcut,Path.Combine(AppRoot,"Uninstall.exe"),"/repair-sensors");}catch{}
 
         using(RegistryKey run=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))
             run.DeleteValue("TaskbarMonitorEnhanced",false);
@@ -2578,7 +2953,25 @@ internal static partial class SetupProgram
                 throw new IOException("In-place upgrade did not produce the exact target app and version.");
             WritePhase("COMMITTED");
             CleanOwnedStage(entries);
-            return ExistingSensorOutcome();
+            SensorOutcome completed=ExistingSensorOutcome();
+            // The executable upgrade is already committed. A foreign or
+            // unexpectedly changed Start-menu link must NOT be overwritten,
+            // and an optional shortcut-migration failure must not relaunch
+            // the completed binary rollback transaction.
+            try
+            {
+                string repairLink=Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.Programs),
+                    Product+" - Repair Hardware Sensors.lnk");
+                if(!MigrateOwnedLegacyRepairShortcut(repairLink,installedSetup,AppExe))
+                    completed.Message+=" The existing Repair shortcut is not an exact product-owned link; it was preserved. Use the verified in-app Repair control.";
+            }
+            catch(Exception migrationError)
+            {
+                completed.Message+=" The Repair shortcut could not be safely migrated: "+
+                    migrationError.Message+". Use verified in-app Repair until the shortcut is reviewed.";
+            }
+            return completed;
         }catch(Exception firstFailure){
             if(Directory.Exists(UpgradeRoot)){
                 try{RecoverUpgradeStageIfAny();}

@@ -1,4 +1,11 @@
 # Project Knowledge / Evidence Record — Taskbar Monitor Enhanced
+<!-- TBME:PUBLIC-KNOWLEDGE:R287 -->
+## 2026-10-17 / R286–R287 — v1.7.8 owner real thermal sound API (public redacted scope)
+
+- [Release v1.7.8](https://github.com/GOD13emad/TaskbarMonitorEnhanced/releases/tag/v1.7.8) source 9960a06dba606d1c93b8ca2b84e0e3e25ca4f68d, Setup SHA 4DB3C03AC7AB70B3D3123A365C156E71370F0338991B399B99169A4B5B5F8B75, Main SHA A3E9ABD7E97655AD6787B71239505F30A7C0350B77F352DE4DE83461CD170D31, seven immutable assets. Build 38977412946 (27/27) and native Windows two-host crash recovery 38977412933 (3/3) PASS; a real same-root per-user update and protected 26-file previous-version archive were verified, with Glass zero alpha/hot red retained.
+- The new optional sound setting defaults off for fresh installations; the owner enabled it. Settings includes a manual one-shot Test warning sound. Natural CPU high temperature warnings then produced 26 paired Windows Exclamation sound API requests, zero logged failures and minimum spacing 10.001 min, using existing quiet-hours, 3C hysteresis and ten-minute cooldown. OS Exclamation sound file exists. A request log is not proof physical speaker audibility or a visible Windows balloon.
+- Reporter-specific WinRing0 original file SHA/download origin remains missing in Issue #6. Unmerged PR #80 has CodeQL path-analysis warnings still needing exact Windows/security adjudication. Separate signed local PawnIO on a different PC cannot clear the reporter. No Defender bypass. User excluded actual AC power-loss tests, and accepted one per-user unsigned Setup rather than a global machinewide singleton.
+
 <!-- TBME:PUBLIC-KNOWLEDGE:R285 -->
 ## 2026-10-17 / R285 — release and owner verification public summary (redacted derivative)
 

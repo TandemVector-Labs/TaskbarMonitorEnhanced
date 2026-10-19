@@ -5,7 +5,9 @@ param(
     [Parameter(Mandatory=$true)][string]$UserId,
     [string]$ExpectedBrokerSHA256='',
     [string]$ExpectedSupervisorSHA256='',
-    [string]$ExpectedBackendZipSHA256=''
+    [string]$ExpectedBackendZipSHA256='',
+    [string]$StatusPipe='',
+    [string]$StatusNonce=''
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -119,114 +121,44 @@ function Assert-SensorPrivilegedBoundary(
     return $sid
 }
 $validatedSensorSid=Assert-SensorPrivilegedBoundary $Mode $PayloadDir $AppRoot $UserId
+# R080: privilege boundary. Before mutating protected resources, bind the
+# expected asInvoker Setup named pipe; NO writes to mutable user Logs here.
+if($StatusPipe -cnotmatch '^tbme_sensor_[0-9a-f]{32}$' -or
+   $StatusNonce -cnotmatch '^[0-9a-f]{32}$'){
+    throw 'SENSOR_STATUS_CHANNEL_REQUIRED'
+}
+$script:StatusLogs=[Collections.Generic.List[string]]::new()
+$script:StatusPipeClient=[IO.Pipes.NamedPipeClientStream]::new(
+    '.',$StatusPipe,[IO.Pipes.PipeDirection]::InOut)
+try{
+    $script:StatusPipeClient.Connect(12000)
+    $hello=[Text.Encoding]::UTF8.GetBytes(('HELLO|'+$StatusNonce+[char]10))
+    $script:StatusPipeClient.Write($hello,0,$hello.Length)
+    $script:StatusPipeClient.Flush()
+    $reader=[IO.StreamReader]::new($script:StatusPipeClient,[Text.Encoding]::UTF8,
+                                 $false,1024,$true)
+    $ack=$reader.ReadLine()
+    $reader.Dispose()
+    if($ack -cne ('ACK|'+$StatusNonce)){
+        throw 'SENSOR_STATUS_PEER_NOT_VERIFIED'
+    }
+}catch{
+    $script:StatusPipeClient.Dispose()
+    $script:StatusPipeClient=$null
+    throw
+}
 
-# R335: native in-memory handle guards pin canonical per-user profile
-# ancestry and exact file handles across log/result writes. Refuse reparse
-# points by handle, never create a user-writable script or change UAC policy.
+# R349: the privileged Helper pins only protected Program Files Broker
+# directories and recovery leaves through the native lease below. The
+# historical R335 user-profile log lease is intentionally absent: R080
+# sends bounded status through the verified IPC receiver; only the
+# unelevated Setup writes the user's Logs. Never reinstate direct elevated
+# writes to the user-controlled log/result tree.
 Add-Type -TypeDefinition @'
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
-public sealed class TBMEScopedUserLogLease : IDisposable {
-const uint FILE_LIST_DIRECTORY=0x0001;
-const uint GENERIC_READ=0x80000000;
-const uint GENERIC_WRITE=0x40000000;
-const uint FILE_SHARE_READ=1,FILE_SHARE_WRITE=2;
-const uint OPEN_EXISTING=3, OPEN_ALWAYS=4;
-const uint FILE_FLAG_BACKUP_SEMANTICS=0x02000000;
-const uint FILE_FLAG_OPEN_REPARSE_POINT=0x00200000;
-const uint FILE_ATTRIBUTE_DIRECTORY=0x10;
-const uint FILE_ATTRIBUTE_REPARSE_POINT=0x400;
-[DllImport("kernel32.dll",EntryPoint="CreateFileW",SetLastError=true,CharSet=CharSet.Unicode)]
-static extern SafeFileHandle OpenNative(string name,uint access,uint share,IntPtr sec,uint disposition,uint flags,IntPtr template);
-[StructLayout(LayoutKind.Sequential)]
-public struct TagInfo { public uint FileAttributes; public uint ReparseTag; }
-[DllImport("kernel32.dll",SetLastError=true)]
-static extern bool GetFileInformationByHandleEx(SafeFileHandle handle,int kind,out TagInfo data,uint size);
-readonly SafeFileHandle[] guard=new SafeFileHandle[5];
-int guardCount=0;
-FileStream stream;
-bool disposed;
-static SafeFileHandle OpenChecked(string path,uint access,uint share,uint disposition,uint flags,bool isDirectory){
-SafeFileHandle handle=OpenNative(path,access,share,IntPtr.Zero,disposition,flags,IntPtr.Zero);
-if(handle.IsInvalid){
-int e=Marshal.GetLastWin32Error();
-handle.Dispose();
-throw new IOException("SENSOR_LOG_HANDLE_CREATEFILE_FAILED_WIN32_"+e+" "+Path.GetFileName(path));
-}
-TagInfo info;
-if(!GetFileInformationByHandleEx(handle,9,out info,(uint)Marshal.SizeOf(typeof(TagInfo)))){
-int e=Marshal.GetLastWin32Error();
-handle.Dispose();
-throw new IOException("SENSOR_LOG_HANDLE_ATTRIBUTE_TAG_QUERY_FAILED_WIN32_"+e);
-}
-if((info.FileAttributes&FILE_ATTRIBUTE_REPARSE_POINT)!=0 ||
-((info.FileAttributes&FILE_ATTRIBUTE_DIRECTORY)!=0)!=isDirectory){
-handle.Dispose();
-throw new IOException("SENSOR_LOG_HANDLE_REPARSE_OR_COMPONENT_TYPE_REFUSED");
-}
-return handle;
-}
-public TBMEScopedUserLogLease(string profile,string appRoot,string logDir,string exactFile){
-if(String.IsNullOrWhiteSpace(profile) || String.IsNullOrWhiteSpace(appRoot) ||
-String.IsNullOrWhiteSpace(logDir) || String.IsNullOrWhiteSpace(exactFile))
-throw new IOException("SENSOR_LOG_HANDLE_EMPTY_LOG_BOUNDARY");
-string p=Path.GetFullPath(profile);
-string appdata=Path.Combine(p,"AppData");
-string local=Path.Combine(appdata,"Local");
-string expected=Path.GetFullPath(Path.Combine(local,"TaskbarMonitorEnhanced"));
-string logs=Path.GetFullPath(Path.Combine(expected,"Logs"));
-string file=Path.GetFullPath(exactFile);
-string log=Path.GetFullPath(Path.Combine(logs,"sensor_install.log"));
-string result=Path.GetFullPath(Path.Combine(logs,"sensor_install_result.json"));
-if(!String.Equals(Path.GetFullPath(appRoot),expected,StringComparison.OrdinalIgnoreCase) ||
-!String.Equals(Path.GetFullPath(logDir),logs,StringComparison.OrdinalIgnoreCase) ||
-!(String.Equals(file,log,StringComparison.OrdinalIgnoreCase) ||
-String.Equals(file,result,StringComparison.OrdinalIgnoreCase))){
-throw new IOException("SENSOR_LOG_HANDLE_CANONICAL_LOG_PATH_MISMATCH");
-}
-try{
-foreach(string dir in new string[]{p,appdata,local,expected,logs}){
-SafeFileHandle parent=OpenChecked(dir,FILE_LIST_DIRECTORY,FILE_SHARE_READ|FILE_SHARE_WRITE,
-OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,true);
-guard[guardCount++]=parent;
-}
-SafeFileHandle h=OpenChecked(file,GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ,
-OPEN_ALWAYS,FILE_FLAG_OPEN_REPARSE_POINT,false);
-try{
-stream=new FileStream(h,FileAccess.ReadWrite);
-stream.Seek(0,SeekOrigin.End);
-}catch{h.Dispose();throw;}
-}catch{Dispose();throw;}
-}
-public void Append(string text){
-if(disposed || stream==null)throw new ObjectDisposedException("TBMEScopedUserLogLease");
-if(stream.Length==0){
-byte[] bom=new System.Text.UTF8Encoding(true).GetPreamble();
-stream.Write(bom,0,bom.Length);
-}
-byte[] data=System.Text.Encoding.UTF8.GetBytes(text);
-stream.Write(data,0,data.Length);
-stream.Flush(true);
-}
-public void Overwrite(string text){
-if(disposed || stream==null)throw new ObjectDisposedException("TBMEScopedUserLogLease");
-stream.SetLength(0);stream.Position=0;
-byte[] bom=new System.Text.UTF8Encoding(true).GetPreamble();
-stream.Write(bom,0,bom.Length);
-byte[] data=System.Text.Encoding.UTF8.GetBytes(text);
-stream.Write(data,0,data.Length);
-stream.Flush(true);
-}
-public void Dispose(){
-if(disposed)return;
-disposed=true;
-if(stream!=null){stream.Dispose();stream=null;}
-for(int i=guardCount-1;i>=0;i--)if(guard[i]!=null)guard[i].Dispose();
-guardCount=0;
-}
-}
 public sealed class TBMEProtectedBrokerLease : IDisposable {
 const uint FILE_LIST_DIRECTORY=0x00000001;
 const uint SHARE_READ=1, SHARE_WRITE=2, OPEN_EXISTING=3;
@@ -408,12 +340,7 @@ $script:SensorJournalRoot=Join-Path ([Environment]::GetFolderPath([Environment+S
 $LogsRoot=Join-Path $AppRoot 'Logs'
 $ResultPath=Join-Path $LogsRoot 'sensor_install_result.json'
 $LogPath=Join-Path $LogsRoot 'sensor_install.log'
-# R328: the user owns this tree and can replace its directories between
-# the original privileged preflight and its later log/result writes.
-# Recheck immediately around creation; this does not close atomic races.
-Assert-SensorBoundaryNoReparse $LogsRoot
-New-Item -ItemType Directory -Force -Path $LogsRoot | Out-Null
-Assert-SensorBoundaryNoReparse $LogsRoot
+# No privileged creation of AppRoot/Logs; asInvoker Setup owns status persistence.
 
 # R21 health channels are initialized before any early-return/uninstall branch so
 # Write-Result can always emit a stable schema under StrictMode.
@@ -461,11 +388,14 @@ function Assert-SensorUserLogSink([string]$Target){
     }
 }
 
+# R080: privileged Helper MUST NOT write user-owned log or JSON paths.
+# These methods only stage bounded in-memory text and send a single result.
 function Write-Log([string]$Message){
-    Assert-SensorUserLogSink $LogPath
-    $line=(Get-Date).ToString('o')+' '+$Message+[Environment]::NewLine
-    $lease=[TBMEScopedUserLogLease]::new($script:ValidatedSensorProfileRoot,$AppRoot,$LogsRoot,$LogPath)
-    try{$lease.Append($line)}finally{$lease.Dispose()}
+    if($null -eq $script:StatusPipeClient){throw 'SENSOR_STATUS_CHANNEL_CLOSED'}
+    $line=(Get-Date).ToString('o')+' '+$Message
+    if($script:StatusLogs.Count -lt 60){
+        $script:StatusLogs.Add($line.Substring(0,[Math]::Min(256,$line.Length)))
+    }
 }
 function Write-Result(
     [string]$Status,
@@ -476,7 +406,7 @@ function Write-Result(
     [bool]$TaskInstalled,
     [bool]$SensorHealthy
 ){
-    Assert-SensorUserLogSink $ResultPath
+    if($null -eq $script:StatusPipeClient){throw 'SENSOR_STATUS_CHANNEL_CLOSED'}
     $json=[ordered]@{
         Status=$Status
         Message=$Message
@@ -496,10 +426,23 @@ function Write-Result(
         PreviousSensorLayerPresent=$PreviousSensorLayerPresent
         Time=(Get-Date).ToString('o')
         LogPath=$LogPath
-    } | ConvertTo-Json -Depth 5
-    $lease=[TBMEScopedUserLogLease]::new($script:ValidatedSensorProfileRoot,$AppRoot,$LogsRoot,$ResultPath)
-    try{$lease.Overwrite($json+[Environment]::NewLine)}finally{$lease.Dispose()}
+    } | ConvertTo-Json -Depth 5 -Compress
+    $logs=($script:StatusLogs -join [string][char]10)
+    $frame='TBME80|'+$StatusNonce+'|'+
+           [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$json))+'|'+
+           [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$logs))+
+           [char]10
+    $data=[Text.Encoding]::UTF8.GetBytes($frame)
+    if($data.Length -gt 60000){throw 'SENSOR_STATUS_FRAME_TOO_LARGE'}
+    try{
+        $script:StatusPipeClient.Write($data,0,$data.Length)
+        $script:StatusPipeClient.Flush()
+    }finally{
+        $script:StatusPipeClient.Dispose()
+        $script:StatusPipeClient=$null
+    }
 }
+
 function Get-PawnIOVersion {
     foreach($key in @(
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PawnIO',
