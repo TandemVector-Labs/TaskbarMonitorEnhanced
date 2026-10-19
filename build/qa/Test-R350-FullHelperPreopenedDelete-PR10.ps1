@@ -211,9 +211,17 @@ try {
 
  $phase='REAL_HELPER_COLD_REPLAY_MUST_FAIL_CLOSED_UNDER_OPEN_DELETE'
  $negativeStatus=Call-RealElevatedHelper 'WITH_PREOPENED_DELETE'
+ # A second Administrator deliberately holds DELETE access to the
+ # protected executable. File-based Get-FileHash cannot reopen it with a
+ # compatible share mode until that distinct actor releases its native
+ # handle. Do NOT mistake the expected Windows sharing denial for a helper
+ # rollback failure; inspect only the independent hashed PREPARED journal
+ # and Task Scheduler state while the handle is live. Byte-exact file hash
+ # verification is performed immediately after the actor exits, *before*
+ # this fixture itself deletes the test leaf.
  if($negativeStatus -cne 'DEGRADED_ROLLBACK_RECOVERY_REQUIRED' -or
     (Get-SensorJournalTerminal $journal $sid) -cne 'PREPARED' -or
-    (TaskExists) -or (Hash $brokerExe) -cne $originalHash){
+    (TaskExists)){
   throw ('R350_HELPER_FAILED_TO_RETAIN_PREPARED_ON_PREOPENED_DELETE_'+$negativeStatus)
  }
  Check 'REAL_PE_HELPER_COLD_REPLAY_REFUSED_PRIOR_DELETE_WITH_PREPARED_PRESERVED'
