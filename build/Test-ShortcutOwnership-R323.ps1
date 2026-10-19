@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$SetupPath = '',
     [string]$MainPath = ''
@@ -91,7 +91,13 @@ try {
     Assert-Positive 'owned_main_no_arguments' $owned $main ''
 
     $repair=Make-Shortcut 'owned-repair.lnk' $setupExe '/repair-sensors'
-    Assert-Positive 'owned_repair_exact_arguments' $repair $setupExe '/repair-sensors'
+    Assert-Positive 'owned_legacy_repair_exact_arguments' $repair $setupExe '/repair-sensors'
+
+    $modern=Make-Shortcut 'owned-main-repair.lnk' $main '--repair-sensors'
+    Assert-Positive 'owned_current_main_repair_exact_arguments' $modern $main '--repair-sensors'
+
+    $wrongRepair=Make-Shortcut 'legacy_repair_preserve_wrong_owner.lnk' $setupExe '/repair-sensors'
+    Assert-Preserve 'do_not_delete_legacy_with_new_main_identity' $wrongRepair $main '--repair-sensors' $true
 
     $recovery=Make-Shortcut 'owned-recovery.lnk' $main '--startup-recovery'
     Assert-Positive 'owned_recovery_exact_arguments' $recovery $main '--startup-recovery'
@@ -127,7 +133,7 @@ try {
     if([IO.File]::ReadAllText($canary) -ne 'PRESERVE-FOREIGN-OWNER') {
         throw 'R323_EXTERNAL_CANARY_CHANGED'
     }
-    if($passed -ne 11 -or $total -ne 11) { throw 'R323_NATIVE_CHECK_COUNT_MISMATCH' }
+    if($passed -ne 13 -or $total -ne 13) { throw 'R323_NATIVE_CHECK_COUNT_MISMATCH' }
     $checked | ForEach-Object { Write-Output $_ }
     Write-Output ('R323_OWNED_SHORTCUT_NATIVE_PASS='+$passed+'/'+$total)
 } finally {

@@ -86,6 +86,11 @@ jobs:
         run: |
           & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R355-ImmutableRepairRelease-Native.ps1
           if ($LASTEXITCODE -ne 0) { throw 'R355 immutable current-version release and safe repair native contract failed.' }
+      - name: R356 repair shortcut normal-user Main dispatch and legacy ownership
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R356-RepairShortcut-Native.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'R356 Main-based safe repair shortcut and owner matching native regression failed.' }
       - name: R322 embedded backend ZIP archive/hostile entries (native .NET Framework)
         shell: pwsh
         run: |

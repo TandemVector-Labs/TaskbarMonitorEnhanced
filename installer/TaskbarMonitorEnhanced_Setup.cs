@@ -735,7 +735,7 @@ internal static partial class SetupProgram
            !String.Equals(Path.GetExtension(path),".lnk",StringComparison.OrdinalIgnoreCase))
             return false;
         string args=expectedArguments??"";
-        if(args!="" && args!="/repair-sensors" && args!="--startup-recovery")
+        if(args!="" && args!="/repair-sensors" && args!="--repair-sensors" && args!="--startup-recovery")
             return false;
         string link=Path.GetFullPath(path);
         string target=Path.GetFullPath(expectedTarget);
@@ -1357,7 +1357,7 @@ internal static partial class SetupProgram
         string startLink=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),Product+".lnk");
         string repairLink=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),Product+" - Repair Hardware Sensors.lnk");
         Shortcut(startLink,AppExe);
-        Shortcut(repairLink,uninstaller,"/repair-sensors","Repair or retry Taskbar Monitor Enhanced hardware sensors");
+        Shortcut(repairLink,AppExe,"--repair-sensors","Repair using verified immutable official Setup (administrator consent required)");
         if(desktop)Shortcut(desktopLink,AppExe);
         // Fresh install with desktop disabled does not touch any existing link.
 
@@ -1564,7 +1564,11 @@ foreach($dir in ($dirs|Sort-Object Length -Descending)){
 
         try{DeleteOwnedShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),Product+".lnk"),AppExe,"");}catch{}
         try{DeleteOwnedShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),Product+".lnk"),AppExe,"");}catch{}
-        try{DeleteOwnedShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),Product+" - Repair Hardware Sensors.lnk"),Path.Combine(AppRoot,"Uninstall.exe"),"/repair-sensors");}catch{}
+        // R356: either valid historical Repair shortcut layout is product-owned.
+        // Do not delete or overwrite a foreign same-name shortcut.
+        string repairShortcut=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),Product+" - Repair Hardware Sensors.lnk");
+        try{DeleteOwnedShortcut(repairShortcut,AppExe,"--repair-sensors");}catch{}
+        try{DeleteOwnedShortcut(repairShortcut,Path.Combine(AppRoot,"Uninstall.exe"),"/repair-sensors");}catch{}
 
         using(RegistryKey run=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))
             run.DeleteValue("TaskbarMonitorEnhanced",false);

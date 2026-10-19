@@ -10579,6 +10579,59 @@ namespace TaskbarMonitorEnhanced
         }
     }
 
+    // R356: the Start-menu repair shortcut invokes Main as an unelevated
+    // application, not the mutable per-user Uninstall.exe with runas.
+    // A separate invocation works even if the monitoring process owns the
+    // regular single-instance mutex. Only verified official Setup requests
+    // native OS administrator consent; this code does not bypass it.
+    internal static class RepairShortcutEntryPoint
+    {
+        internal const string Argument="--repair-sensors";
+
+        internal static bool IsExactInvocation(string[] argv)
+        {
+            return argv!=null&&argv.Length==1&&
+                   String.Equals(argv[0],Argument,StringComparison.Ordinal);
+        }
+
+        internal static int Run()
+        {
+            try
+            {
+                DialogResult answer=MessageBox.Show(
+                    "Download and SHA-256 verify the immutable official "+
+                    BuildInfo.PublicVersion+" Setup from GitHub to repair protected sensors? "+
+                    "Windows may then request administrator approval. "+
+                    "The local Uninstall.exe will NOT be elevated.",
+                    "Repair protected sensors",MessageBoxButtons.YesNo,MessageBoxIcon.Question);
+                if(answer!=DialogResult.Yes)return 0;
+                ReleaseUpdateInfo release=UpdateManager.CheckCurrentReleaseForRepair();
+                string verifiedPath=UpdateManager.DownloadAndVerifyForRepair(release);
+                using(FileStream pinned=UpdateManager.OpenPinnedVerifiedUpdateInstaller(
+                    verifiedPath,release.SetupDigest,AppPaths.Updates))
+                {
+                    ProcessStartInfo psi=UpdateManager.BuildPinnedRepairProcessInfo(pinned,AppPaths.Updates);
+                    using(Process child=Process.Start(psi))
+                    {
+                        if(child==null)
+                            throw new InvalidOperationException("Windows did not start the SHA-verified official repair Setup.");
+                    }
+                    Log.Write("INFO","REPAIR_SHORTCUT_PINNED_OFFICIAL_RELEASE version="+release.Version);
+                }
+                return 0;
+            }
+            catch(Exception ex)
+            {
+                Log.Write("WARN","REPAIR_SHORTCUT_REFUSED "+ex.Message);
+                MessageBox.Show("The verified official repair Setup could not be started: "+
+                    ex.Message+"\r\nNo mutable local uninstaller was elevated. "+
+                    "Use the official GitHub release page for manual review.",
+                    "Repair protected sensors",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+                return 42;
+            }
+        }
+    }
+
     internal static class Program
     {
         [STAThread]
@@ -10680,6 +10733,12 @@ namespace TaskbarMonitorEnhanced
             }
             if(args!=null && args.Length>0 && args[0]=="--startup-contract-selftest")
                 return StartupManager.RunContractSelfTest();
+            // R356: intentional shortcut repair is independent of the
+            // long-lived monitor mutex; extra arguments fail closed.
+            if(args!=null&&args.Length>0&&
+               String.Equals(args[0],RepairShortcutEntryPoint.Argument,StringComparison.Ordinal))
+                return RepairShortcutEntryPoint.IsExactInvocation(args)?
+                    RepairShortcutEntryPoint.Run():41;
             if(StartupManager.IsRecoveryInvocation(args)&&StartupManager.WaitForPrimaryInstanceOrTimeout())return 0;
             bool created;
             using(Mutex mutex=new Mutex(true,@"Local\TaskbarMonitorEnhanced_V1_1_0",out created))
