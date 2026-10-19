@@ -45,12 +45,14 @@ function Delete-Owner([string]$link,[string]$target,[string]$argsText){
 }
 if(!(Matches ([string[]]@('--repair-sensors')))){throw 'R356_CURRENT_MAIN_ARG_NOT_ACCEPTED'}
 Pass 'CURRENT_MAIN_REPAIR_ARGUMENT_ACCEPTED'
-foreach($v in @(
- [string[]]@('/repair-sensors'),
- [string[]]@('--REPAIR-SENSORS'),
- [string[]]@('--repair-sensors','--quiet'),
- [string[]]@('--repair-sensors','extra'))){
- if(Matches $v){throw 'R356_UNTRUSTED_SHORTCUT_ARGUMENT_WAS_ACCEPTED'}
+$malformed=@(
+ @{Argv=[string[]]@('/repair-sensors')},
+ @{Argv=[string[]]@('--REPAIR-SENSORS')},
+ @{Argv=[string[]]@('--repair-sensors','--quiet')},
+ @{Argv=[string[]]@('--repair-sensors','extra')}
+)
+foreach($case in $malformed){
+ if(Matches ([string[]]$case.Argv)){throw 'R356_UNTRUSTED_SHORTCUT_ARGUMENT_WAS_ACCEPTED'}
 }
 Pass 'LEGACY_CASE_VARIANT_AND_EXTRA_ARGS_REJECTED'
 if(Matches ([string[]]@())){throw 'R356_EMPTY_REPAIR_REQUEST_ACCEPTED'}
@@ -104,7 +106,7 @@ try{
  if(IsOwned $current $setup '/repair-sensors'){throw 'R356_CURRENT_LINK_WRONGLY_LEGACY_OWNED'}
  Pass 'MODERN_REPAIR_LINK_ONLY_EXACT_OWNER_TUPLE'
  $oldHash=(Get-FileHash -LiteralPath $current -Algorithm SHA256).Hash
- if(Delete-Owner $current $setup '/repair-sensors' -or
+ if((Delete-Owner $current $setup '/repair-sensors') -or
    (Get-FileHash -LiteralPath $current -Algorithm SHA256).Hash -cne $oldHash){
   throw 'R356_WRONG_LEGACY_TUPLE_REMOVED_MODERN_SHORTCUT'
  }
@@ -120,7 +122,7 @@ try{
  if(!(IsOwned $legacy $setup '/repair-sensors')){throw 'R356_LEGACY_LINK_NOT_RECOGNIZED'}
  Pass 'LEGACY_REPAIR_OWNER_RECOGNIZED_FOR_SAFE_MIGRATION'
  $oldHash=(Get-FileHash -LiteralPath $legacy -Algorithm SHA256).Hash
- if(Delete-Owner $legacy $main '--repair-sensors' -or
+ if((Delete-Owner $legacy $main '--repair-sensors') -or
     (Get-FileHash -LiteralPath $legacy -Algorithm SHA256).Hash -cne $oldHash){
   throw 'R356_NEW_TUPLE_DELETED_OLD_OWNED_LINK'
  }
@@ -134,7 +136,7 @@ try{
  $link.TargetPath=$main;$link.Arguments='--repair-sensors --evil';$link.Save()
  [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($link);$link=$null
  $foreignHash=(Get-FileHash -LiteralPath $foreign -Algorithm SHA256).Hash
- if(Delete-Owner $foreign $main '--repair-sensors' -or
+ if((Delete-Owner $foreign $main '--repair-sensors') -or
     (Get-FileHash -LiteralPath $foreign -Algorithm SHA256).Hash -cne $foreignHash){
   throw 'R356_FOREIGN_ARGUMENT_SHORTCUT_OVERWRITTEN_OR_REMOVED'
  }
