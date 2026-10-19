@@ -1030,10 +1030,93 @@ namespace TaskbarMonitorEnhanced
             string actual=Sha256File(path);if(!String.Equals(expected,actual,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Installer changed after verification.");
             return actual;
         }
+        // R353: VerifyInstallerBeforeLaunch checks content but deliberately
+        // closes its read handle (the portable selftest still uses that API).
+        // For a real launch, retain a read-only file handle with *no* write or
+        // delete sharing from SHA verification through ShellExecute, so a
+        // same-user update cache writer cannot swap or truncate the leaf in
+        // the verify-to-start interval. This does not prove an atomic guard
+        // against same-user ancestor directory replacement.
+        internal static FileStream OpenPinnedVerifiedUpdateInstaller(string path,string expectedDigest,string expectedUpdatesRoot)
+        {
+            if(!IsStrictSha256Digest(expectedDigest))
+                throw new InvalidDataException("Expected update installer SHA-256 digest is invalid.");
+            if(String.IsNullOrWhiteSpace(path)||!Path.IsPathRooted(path)||
+               String.IsNullOrWhiteSpace(expectedUpdatesRoot)||!Path.IsPathRooted(expectedUpdatesRoot))
+                throw new InvalidDataException("Pinned update installer path is not absolute.");
+            string root=Path.GetFullPath(expectedUpdatesRoot).TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar);
+            string candidate=Path.GetFullPath(path);
+            if(root.StartsWith(@"\\",StringComparison.Ordinal) ||
+               candidate.StartsWith(@"\\",StringComparison.Ordinal) ||
+               !String.Equals(Path.GetDirectoryName(candidate),root,StringComparison.OrdinalIgnoreCase) ||
+               !Regex.IsMatch(Path.GetFileName(candidate),@"^TaskbarMonitorEnhanced_Setup_\d+\.\d+\.\d+\.exe$",
+                              RegexOptions.CultureInvariant|RegexOptions.IgnoreCase))
+                throw new InvalidDataException("Update installer escaped the expected canonical versioned cache file.");
+            // Reject reparse points in existing ancestor directories as well
+            // as the candidate leaf. These are point-in-time checks only.
+            for(string folder=root;!String.IsNullOrWhiteSpace(folder);)
+            {
+                if((File.GetAttributes(folder)&FileAttributes.ReparsePoint)!=0)
+                    throw new InvalidDataException("Update installer ancestor is redirected.");
+                string parent=Path.GetDirectoryName(folder);
+                if(String.IsNullOrEmpty(parent)||String.Equals(parent,folder,StringComparison.OrdinalIgnoreCase))
+                    break;
+                folder=parent;
+            }
+            if((File.GetAttributes(candidate)&FileAttributes.ReparsePoint)!=0)
+                throw new InvalidDataException("Update installer leaf is redirected.");
+            FileStream pinned=null;
+            try
+            {
+                pinned=new FileStream(candidate,FileMode.Open,FileAccess.Read,FileShare.Read);
+                if(pinned.Length<1024 || pinned.Length>536870912)
+                    throw new InvalidDataException("Pinned update installer length is out of bounds.");
+                string actual;
+                using(SHA256 hash=SHA256.Create())
+                {
+                    byte[] bytes=hash.ComputeHash(pinned);
+                    StringBuilder hex=new StringBuilder(bytes.Length*2);
+                    foreach(byte b in bytes)hex.Append(b.ToString("X2",CultureInfo.InvariantCulture));
+                    actual=hex.ToString();
+                }
+                string expected=expectedDigest.Substring(expectedDigest.IndexOf(':')+1).ToUpperInvariant();
+                if(!String.Equals(actual,expected,StringComparison.Ordinal))
+                    throw new InvalidDataException("Pinned update installer changed after download verification.");
+                pinned.Position=0;
+                return pinned;
+            }
+            catch{if(pinned!=null)pinned.Dispose();throw;}
+        }
+
+        internal static ProcessStartInfo BuildPinnedUpdateInstallerProcessInfo(FileStream pinned,string expectedUpdatesRoot)
+        {
+            if(pinned==null||!pinned.CanRead||String.IsNullOrWhiteSpace(expectedUpdatesRoot)||
+               !Path.IsPathRooted(expectedUpdatesRoot))
+                throw new InvalidDataException("Pinned update process handle/root is unavailable.");
+            string root=Path.GetFullPath(expectedUpdatesRoot).TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar);
+            string file=Path.GetFullPath(pinned.Name);
+            if(!String.Equals(Path.GetDirectoryName(file),root,StringComparison.OrdinalIgnoreCase)||
+               !Regex.IsMatch(Path.GetFileName(file),@"^TaskbarMonitorEnhanced_Setup_\d+\.\d+\.\d+\.exe$",
+                              RegexOptions.CultureInvariant|RegexOptions.IgnoreCase))
+                throw new InvalidDataException("Pinned update process escaped its verified cache folder.");
+            ProcessStartInfo psi=new ProcessStartInfo();
+            psi.FileName=file;
+            psi.Arguments=String.Empty;
+            psi.UseShellExecute=true;
+            psi.ErrorDialog=false;
+            return psi;
+        }
+
         public static void StartInstaller(string path,string expectedDigest)
         {
-            string actual=VerifyInstallerBeforeLaunch(path,expectedDigest);
-            ProcessStartInfo psi=new ProcessStartInfo();psi.FileName=path;psi.UseShellExecute=true;Process p=Process.Start(psi);if(p==null)throw new InvalidOperationException("Windows did not start the update installer.");Log.Write("INFO","UPDATE_INSTALLER_STARTED reverifiedSha256="+actual+" path="+path);
+            using(FileStream pinned=OpenPinnedVerifiedUpdateInstaller(path,expectedDigest,AppPaths.Updates))
+            {
+                ProcessStartInfo psi=BuildPinnedUpdateInstallerProcessInfo(pinned,AppPaths.Updates);
+                Process process=Process.Start(psi);
+                if(process==null)throw new InvalidOperationException("Windows did not start the update installer.");
+                string digest=expectedDigest.Substring(expectedDigest.IndexOf(':')+1).ToUpperInvariant();
+                Log.Write("INFO","UPDATE_INSTALLER_STARTED pinnedSha256="+digest+" path="+pinned.Name);
+            }
         }
     }
 

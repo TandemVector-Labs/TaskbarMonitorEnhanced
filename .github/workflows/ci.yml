@@ -76,6 +76,11 @@ jobs:
         run: |
           & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R352-PinnedWindowsUiTools-Native.ps1
           if ($LASTEXITCODE -ne 0) { throw 'R352 fixed OS UI tools / hostile PATH native regression failed.' }
+      - name: R353 SHA-pinned Update installer blocks leaf overwrite/delete before process start
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R353-PinnedUpdateInstaller-Native.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'R353 SHA-pinned update installer native negative gate failed.' }
       - name: R322 embedded backend ZIP archive/hostile entries (native .NET Framework)
         shell: pwsh
         run: |
