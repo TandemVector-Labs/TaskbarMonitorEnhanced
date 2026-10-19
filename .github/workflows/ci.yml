@@ -66,6 +66,11 @@ jobs:
         shell: pwsh
         run: ./build/Build.ps1
 
+      - name: R351 pinned OS schtasks command excludes PATH shadow
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R351-TrustedSchtasks-Native.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'R351 pinned Windows Task Scheduler command security regression failed.' }
       - name: R322 embedded backend ZIP archive/hostile entries (native .NET Framework)
         shell: pwsh
         run: |

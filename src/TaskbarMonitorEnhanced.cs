@@ -135,21 +135,49 @@ namespace TaskbarMonitorEnhanced
             return false;
         }
 
+        // R351: never fall back to a bare schtasks.exe resolved through PATH.
+        // A missing, redirected or otherwise untrusted system executable is
+        // a fail-closed self-heal outcome, not permission to launch user code.
+        static string RequireSystemTaskSchedulerPath(string systemDirectory)
+        {
+            if(String.IsNullOrWhiteSpace(systemDirectory) || !Path.IsPathRooted(systemDirectory))
+                throw new InvalidDataException("Canonical Windows system directory unavailable.");
+            string system=Path.GetFullPath(systemDirectory).TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar);
+            if(String.IsNullOrWhiteSpace(system) ||
+               (File.GetAttributes(system)&FileAttributes.ReparsePoint)!=0)
+                throw new InvalidDataException("Windows system directory is unavailable or redirected.");
+            string exe=Path.GetFullPath(Path.Combine(system,"schtasks.exe"));
+            if(!String.Equals(Path.GetDirectoryName(exe),system,StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Task Scheduler executable escaped its system directory.");
+            if(!File.Exists(exe))
+                throw new FileNotFoundException("Canonical system Task Scheduler executable is unavailable.",exe);
+            if((File.GetAttributes(exe)&FileAttributes.ReparsePoint)!=0)
+                throw new InvalidDataException("System Task Scheduler executable is redirected.");
+            return exe;
+        }
+
+        // Keep command construction separate from Process.Start: isolated
+        // Windows tests can inspect the actual compiled process descriptor
+        // without running schtasks, a scheduled task or elevated code.
+        static ProcessStartInfo BuildTaskSchedulerRunProcessInfo()
+        {
+            ProcessStartInfo psi=new ProcessStartInfo();
+            psi.FileName=RequireSystemTaskSchedulerPath(Environment.SystemDirectory);
+            psi.WorkingDirectory=Environment.SystemDirectory;
+            psi.Arguments="/Run /TN \""+TaskName+"\"";
+            psi.UseShellExecute=false;
+            psi.CreateNoWindow=true;
+            psi.RedirectStandardOutput=true;
+            psi.RedirectStandardError=true;
+            return psi;
+        }
+
         public static int TryRunExistingTask(out string detail)
         {
             detail="";
             try
             {
-                string system=Environment.GetFolderPath(Environment.SpecialFolder.System);
-                string exe=Path.Combine(system,"schtasks.exe");
-                if(!File.Exists(exe))exe="schtasks.exe";
-                ProcessStartInfo psi=new ProcessStartInfo();
-                psi.FileName=exe;
-                psi.Arguments="/Run /TN \""+TaskName+"\"";
-                psi.UseShellExecute=false;
-                psi.CreateNoWindow=true;
-                psi.RedirectStandardOutput=true;
-                psi.RedirectStandardError=true;
+                ProcessStartInfo psi=BuildTaskSchedulerRunProcessInfo();
                 Process x=Process.Start(psi);
                 if(x==null){detail="START_RETURNED_NULL";return -2;}
                 if(!x.WaitForExit(8000))
