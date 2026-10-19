@@ -132,6 +132,15 @@ try {
     $afterRollback['RollbackPerformed']=$true
     $afterRollback['RollbackSucceeded']=$true
     Assert-Case 'LEGITIMATE_ROLLBACK' (To-Json $afterRollback) $true
+    # R350: the live PE Helper's two interrupted-journal recovery results
+    # must be persistable only as non-healthy, typed IPC terminal states.
+    foreach($status in @('DEGRADED_PREVIOUS_LAYER_RESTORED',
+                          'DEGRADED_ROLLBACK_RECOVERY_REQUIRED')){
+        $recovery=[ordered]@{}
+        foreach($key in $base.Keys){$recovery[$key]=$base[$key]}
+        $recovery['Status']=$status
+        Assert-Case ('LEGITIMATE_'+$status) (To-Json $recovery) $true
+    }
     foreach($key in $base.Keys){
         $missing=[ordered]@{}
         foreach($k in $base.Keys){if($k -cne $key){$missing[$k]=$base[$k]}}
@@ -140,6 +149,17 @@ try {
     $badReady=[ordered]@{};foreach($k in $base.Keys){$badReady[$k]=$base[$k]}
     $badReady['Status']='READY'
     Assert-Case 'READY_WITH_FALSE_HEALTH' (To-Json $badReady) $false
+    foreach($status in @('DEGRADED_PREVIOUS_LAYER_RESTORED',
+                          'DEGRADED_ROLLBACK_RECOVERY_REQUIRED')){
+        $contradictory=[ordered]@{}
+        foreach($key in $base.Keys){$contradictory[$key]=$base[$key]}
+        $contradictory['Status']=$status
+        $contradictory['SensorHealthy']=$true
+        Assert-Case ('RECOVERY_MUST_NOT_REPORT_HEALTHY_'+$status) (To-Json $contradictory) $false
+        $contradictory['SensorHealthy']=$false
+        $contradictory['TaskInstalled']=$true
+        Assert-Case ('RECOVERY_MUST_NOT_REPORT_TASK_INSTALLED_'+$status) (To-Json $contradictory) $false
+    }
     $rebootBad=[ordered]@{};foreach($k in $base.Keys){$rebootBad[$k]=$base[$k]}
     $rebootBad['Status']='REBOOT_REQUIRED'
     Assert-Case 'REBOOT_WITHOUT_REBOOT_FLAG' (To-Json $rebootBad) $false
@@ -160,7 +180,7 @@ try {
     $wrongRoll=[ordered]@{};foreach($k in $base.Keys){$wrongRoll[$k]=$base[$k]}
     $wrongRoll['Status']='DEGRADED_ROLLED_BACK'
     Assert-Case 'ROLLBACK_SUCCESS_WITHOUT_ROLLBACK' (To-Json $wrongRoll) $false
-    if($positive -ne 4 -or $negative -ne (18+16)){
+    if($positive -ne 6 -or $negative -ne (18+20)){
         throw ('R090_TEST_COVERAGE_CHANGED_POS_'+$positive+'_NEG_'+$negative)
     }
     'R090_VALID_FULL_SCHEMA_CASES='+$positive

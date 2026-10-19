@@ -599,6 +599,8 @@ internal static partial class SetupProgram
                 case "\"DEGRADED_ROLLED_BACK\"":
                 case "\"DEGRADED_ROLLBACK_FAILED\"":
                 case "\"DEGRADED_OTHER_USER_SENSOR_LAYER_PRESERVED\"":
+                case "\"DEGRADED_PREVIOUS_LAYER_RESTORED\"":
+                case "\"DEGRADED_ROLLBACK_RECOVERY_REQUIRED\"":
                 case "\"UNAVAILABLE\"":
                 case "\"UNINSTALLED\"":
                 case "\"UNINSTALL_WARNING\"":
@@ -606,6 +608,17 @@ internal static partial class SetupProgram
                 default:
                     throw new InvalidDataException("Unknown sensor status value.");
             }
+            // R350: both actual cold-recovery outputs from the PE Helper
+            // are degraded, non-healthy terminal statuses. An authenticated
+            // peer must not claim recovery completed while reporting READY
+            // health or a scheduled-task installation to the normal user.
+            if((status=="\"DEGRADED_PREVIOUS_LAYER_RESTORED\"" ||
+                status=="\"DEGRADED_ROLLBACK_RECOVERY_REQUIRED\"") &&
+               (values["SensorHealthy"]!="false" ||
+                values["TaskInstalled"]!="false" ||
+                values["RebootRequired"]!="false"))
+                throw new InvalidDataException("Recovery status contradicts sensor health.");
+
             if(values["Message"]=="\"\"" || values["Architecture"]=="\"\"" ||
                values["Time"]=="\"\"" || values["LogPath"]=="\"\"")
                 throw new InvalidDataException("Mandatory sensor metadata empty.");
