@@ -22,10 +22,10 @@ if(!$pin -or !$explorer -or !$manager){throw 'R352_WINDOWS_TOOLS_FACTORIES_NOT_C
 $checks=[Collections.Generic.List[string]]::new()
 function Pass([string]$name){$script:checks.Add($name);Write-Output ('PASS '+$name)}
 function Reject([string]$name,[string]$folder,[string]$file){
-    $args=New-Object 'object[]' 2;$args[0]=$folder;$args[1]=$file
+    $invokeArgs=[object[]]@([string]$folder,[string]$file)
     $rejected=$false
     try{
-        $value=$pin.Invoke($null,$args)
+        $value=$pin.Invoke($null,$invokeArgs)
         throw ('R352_UNTRUSTED_HOST_ACCEPTED_'+$name+'_'+$value)
     }catch{
         $e=$_.Exception
@@ -45,8 +45,8 @@ $win=[IO.Path]::GetFullPath((Join-Path ([Environment]::GetFolderPath('Windows'))
 foreach($f in @($sys,$win)){if(!(Test-Path -LiteralPath $f -PathType Leaf)){throw 'R352_OS_EXE_MISSING'}}
 $tm=[Diagnostics.ProcessStartInfo]$manager.Invoke($null,$null)
 $logPath=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TaskbarMonitorEnhanced\Logs'
-$args=New-Object 'object[]' 1;$args[0]=$logPath
-$ex=[Diagnostics.ProcessStartInfo]$explorer.Invoke($null,$args)
+$invokeArgs=[object[]]@([string]$logPath)
+$ex=[Diagnostics.ProcessStartInfo]$explorer.Invoke($null,$invokeArgs)
 if($tm.FileName -cne $sys -or !$tm.UseShellExecute -or $tm.Arguments -cne ''){
     throw 'R352_PINNED_TASK_MANAGER_DESCRIPTOR_INVALID'
 }
@@ -66,7 +66,7 @@ $shadow2=Join-Path $fixture 'Taskmgr.exe'
 $prior=$env:PATH
 try{
     $env:PATH=$fixture+[IO.Path]::PathSeparator+$prior
-    $shadowedExplorer=[Diagnostics.ProcessStartInfo]$explorer.Invoke($null,$args)
+    $shadowedExplorer=[Diagnostics.ProcessStartInfo]$explorer.Invoke($null,$invokeArgs)
     $shadowedManager=[Diagnostics.ProcessStartInfo]$manager.Invoke($null,$null)
     if($shadowedExplorer.FileName -cne $win -or $shadowedManager.FileName -cne $sys -or
        [IO.File]::ReadAllText($shadow1) -cne 'R352_FOREIGN_EXPLORER_CANARY' -or
