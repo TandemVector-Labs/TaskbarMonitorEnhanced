@@ -37,6 +37,7 @@ function Refuse([string]$name,[string]$input){
         while($cause.InnerException){$cause=$cause.InnerException}
         if($cause.Message -like 'R351_UNTRUSTED_PATH_ACCEPTED_*'){throw $cause}
         if($cause -isnot [IO.IOException] -and
+           $cause -isnot [IO.InvalidDataException] -and
            $cause -isnot [ArgumentException] -and
            $cause -isnot [UnauthorizedAccessException]){
             throw ('R351_WRONG_REFUSAL_CLASS_'+$name+'_'+$cause.GetType().FullName)
