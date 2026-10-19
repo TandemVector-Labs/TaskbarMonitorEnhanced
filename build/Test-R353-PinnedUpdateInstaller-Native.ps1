@@ -114,13 +114,55 @@ try{
     if($pin){$pin.Dispose()}
 }
 $pin=$null
+
+# R354: verify the pinned ShellExecute descriptor can actually start a
+# deterministic, self-exiting .NET Framework fixture (never the real
+# installer). The test runs *only* on ephemeral GitHub-hosted Windows.
+$probe=Join-Path $updates 'TaskbarMonitorEnhanced_Setup_2.0.0.exe'
+if([IO.File]::Exists($probe)){throw 'R354_EXEC_FIXTURE_COLLISION'}
+$inertProgram=@'
+public static class R354ZeroSideEffectExitFixture {
+    public static int Main() { return 27; }
+}
+'@
+Add-Type -TypeDefinition $inertProgram -OutputType ConsoleApplication -OutputAssembly $probe -ErrorAction Stop|Out-Null
+if(![IO.File]::Exists($probe)){throw 'R354_BOUNDED_INERT_PE_NOT_COMPILED'}
+$probeSha='sha256:'+(Get-FileHash -LiteralPath $probe -Algorithm SHA256).Hash.ToLowerInvariant()
+$launchPin=$null
+$child=$null
+try {
+    $launchPin=Pin $probe $probeSha $updates
+    $launchArgs=[object[]]@($launchPin,[string]$updates)
+    $startInfo=[Diagnostics.ProcessStartInfo]$buildMethod.Invoke($null,$launchArgs)
+    if($startInfo.FileName -cne $probe -or
+       $startInfo.UseShellExecute -ne $true -or
+       $startInfo.Arguments -cne ''){
+        throw 'R354_NOOP_BINARY_NOT_STARTING_FROM_EXACT_PIN'
+    }
+    $startInfo.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden
+    $child=[Diagnostics.Process]::Start($startInfo)
+    if(!$child){throw 'R354_NOOP_PROCESS_CREATION_FAILED'}
+    if(-not $child.WaitForExit(10000)){
+        try{$child.Kill()}catch{}
+        throw 'R354_NOOP_PROCESS_UNEXPECTED_TIMEOUT'
+    }
+    if($child.ExitCode -ne 27){throw ('R354_NOOP_PROCESS_WRONG_EXIT_'+$child.ExitCode)}
+    Pass 'INERT_COMPILED_NET48_EXE_STARTED_WHILE_SHA_PINNED'
+}finally{
+    if($child){
+        if(-not $child.HasExited){try{$child.Kill()}catch{}}
+        $child.Dispose()
+    }
+    if($launchPin){$launchPin.Dispose()}
+}
+
 [IO.File]::AppendAllText($file,'TEST_ONLY_NEW_BYTES')
 Refuse 'RELEASED_FILE_TAMPER_SHA_REFUSED' $file $sha $updates
 if([IO.File]::ReadAllText($canary) -cne 'R353_FOREIGN_CANARY_UNCHANGED'){
     throw 'R353_FOREIGN_CANARY_CHANGED'
 }
 Pass 'FOREIGN_CANARY_PRESERVED'
-foreach($ownedFile in @($file,$other,$unsafe,$canary)){
+foreach($ownedFile in @($file,$other,$unsafe,$canary,$probe)){
     if((Get-Item -LiteralPath $ownedFile -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){
         throw 'R353_UNKNOWN_REPARSE_OWNED_FILE'
     }
@@ -130,5 +172,5 @@ foreach($ownedFile in @($file,$other,$unsafe,$canary)){
 [IO.Directory]::Delete($foreign,$false)
 [IO.Directory]::Delete($fixture,$false)
 Pass 'TEST_OWNED_RUNNER_TEMP_FIXTURE_REMOVED'
-if($checks.Count -ne 12){throw ('R353_CHECK_COUNT_MISMATCH_'+$checks.Count)}
-'R353_EXACT_SHA_PINNED_UPDATE_INSTALLER_NATIVE_PASS=12/12'
+if($checks.Count -ne 13){throw ('R353_CHECK_COUNT_MISMATCH_'+$checks.Count)}
+'R353_AND_R354_SHA_PINNED_UPDATE_LAUNCH_NATIVE_PASS=13/13'
