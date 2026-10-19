@@ -936,6 +936,77 @@ internal static partial class SetupProgram
         }
     }
 
+    // R357: upgrading an explicitly verified older release may encounter
+    // its genuine Start-menu Repair shortcut. Replace ONLY the exact old
+    // Setup /repair-sensors link with the asInvoker Main --repair-sensors link.
+    // The original bytes are backed up on the same volume for a bounded
+    // rollback. A foreign shortcut (even with this filename) is untouched.
+    // As with other same-user shortcut guards, this is not an atomic defence
+    // against concurrent replacement of parent directories by that user.
+    static bool MigrateOwnedLegacyRepairShortcut(string shortcutPath,string legacySetup,string currentMain)
+    {
+        if(String.IsNullOrWhiteSpace(shortcutPath)||!Path.IsPathRooted(shortcutPath)||
+           !String.Equals(Path.GetExtension(shortcutPath),".lnk",StringComparison.OrdinalIgnoreCase)||
+           String.IsNullOrWhiteSpace(legacySetup)||!Path.IsPathRooted(legacySetup)||
+           String.IsNullOrWhiteSpace(currentMain)||!Path.IsPathRooted(currentMain))
+            throw new InvalidDataException("Repair migration path tuple is invalid.");
+        string link=Path.GetFullPath(shortcutPath);
+        string oldExe=Path.GetFullPath(legacySetup);
+        string main=Path.GetFullPath(currentMain);
+        string parent=Path.GetDirectoryName(link);
+        if(String.IsNullOrWhiteSpace(parent)||!Directory.Exists(parent)||
+           (File.GetAttributes(parent)&FileAttributes.ReparsePoint)!=0)
+            throw new InvalidDataException("Repair migration shortcut directory is unavailable or redirected.");
+        if(!ShortcutNameOccupied(link))return true; // User intentionally has no Repair link.
+        if(IsOwnedShortcut(link,main,"--repair-sensors"))return true;
+        if(!IsOwnedShortcut(link,oldExe,"/repair-sensors"))return false; // FOREIGN, untouched.
+        string digest=Sha256File(link);
+        string unique=Guid.NewGuid().ToString("N");
+        string staged=Path.Combine(parent,".TBME_repair_next_"+unique+".lnk");
+        string backup=Path.Combine(parent,".TBME_repair_original_"+unique+".bak");
+        if(ShortcutNameOccupied(staged)||File.Exists(backup)||Directory.Exists(backup))
+            throw new IOException("Repair migration collided with a preexisting file.");
+        bool replaced=false;
+        try
+        {
+            Shortcut(staged,main,"--repair-sensors",
+                     "Repair using verified immutable official Setup (administrator consent required)");
+            if(!IsOwnedShortcut(staged,main,"--repair-sensors")||
+               !IsOwnedShortcut(link,oldExe,"/repair-sensors")||
+               !String.Equals(Sha256File(link),digest,StringComparison.Ordinal))
+                throw new IOException("Repair shortcut changed before controlled migration.");
+            // File.Replace on a single directory/volume creates an original
+            // backup, unlike deleting the old link before creating the new.
+            File.Replace(staged,link,backup,false);
+            replaced=true;
+            if(!IsOwnedShortcut(link,main,"--repair-sensors")||!File.Exists(backup)||
+               (File.GetAttributes(backup)&FileAttributes.ReparsePoint)!=0||
+               !String.Equals(Sha256File(backup),digest,StringComparison.Ordinal))
+                throw new IOException("Repair shortcut migration postcondition failed.");
+            File.Delete(backup);
+            if(File.Exists(backup))
+                throw new IOException("Repair migration backup could not be retired.");
+            return true;
+        }
+        catch
+        {
+            // Only a proven owned replacement and proven original backup
+            // qualify for a rollback. Otherwise preserve the unexpected
+            // content rather than deleting another owner's shortcut.
+            if(replaced&&File.Exists(backup)&&
+               (File.GetAttributes(backup)&FileAttributes.ReparsePoint)==0&&
+               IsOwnedShortcut(link,main,"--repair-sensors")&&
+               String.Equals(Sha256File(backup),digest,StringComparison.Ordinal))
+                File.Replace(backup,link,null,false);
+            throw;
+        }
+        finally
+        {
+            if(File.Exists(staged)&&IsOwnedShortcut(staged,main,"--repair-sensors"))
+                File.Delete(staged);
+        }
+    }
+
     static string Sha256File(string path)
     {
         using(SHA256 sha=SHA256.Create())
@@ -2882,7 +2953,25 @@ internal static partial class SetupProgram
                 throw new IOException("In-place upgrade did not produce the exact target app and version.");
             WritePhase("COMMITTED");
             CleanOwnedStage(entries);
-            return ExistingSensorOutcome();
+            SensorOutcome completed=ExistingSensorOutcome();
+            // The executable upgrade is already committed. A foreign or
+            // unexpectedly changed Start-menu link must NOT be overwritten,
+            // and an optional shortcut-migration failure must not relaunch
+            // the completed binary rollback transaction.
+            try
+            {
+                string repairLink=Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.Programs),
+                    Product+" - Repair Hardware Sensors.lnk");
+                if(!MigrateOwnedLegacyRepairShortcut(repairLink,installedSetup,AppExe))
+                    completed.Message+=" The existing Repair shortcut is not an exact product-owned link; it was preserved. Use the verified in-app Repair control.";
+            }
+            catch(Exception migrationError)
+            {
+                completed.Message+=" The Repair shortcut could not be safely migrated: "+
+                    migrationError.Message+". Use verified in-app Repair until the shortcut is reviewed.";
+            }
+            return completed;
         }catch(Exception firstFailure){
             if(Directory.Exists(UpgradeRoot)){
                 try{RecoverUpgradeStageIfAny();}

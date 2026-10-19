@@ -29,7 +29,8 @@ $sp=$setupAsm.GetType('SetupProgram',$true)
 $create=@($sp.GetMethods($f)|Where-Object { $_.Name -ceq 'Shortcut' -and $_.GetParameters().Count -eq 4 })
 $owned=$sp.GetMethod('IsOwnedShortcut',$f)
 $delete=$sp.GetMethod('DeleteOwnedShortcut',$f)
-if($create.Count -ne 1 -or !$owned -or !$delete){throw 'R356_PRODUCTION_SHORTCUT_METHODS_NOT_COMPILED'}
+$migrate=$sp.GetMethod('MigrateOwnedLegacyRepairShortcut',$f)
+if($create.Count -ne 1 -or !$owned -or !$delete -or !$migrate){throw 'R356_PRODUCTION_SHORTCUT_METHODS_NOT_COMPILED'}
 $checks=[Collections.Generic.List[string]]::new()
 function Pass([string]$x){$script:checks.Add($x);Write-Output ('PASS '+$x)}
 function Matches([string[]]$argv){
@@ -42,6 +43,9 @@ function IsOwned([string]$link,[string]$target,[string]$argsText){
 }
 function Delete-Owner([string]$link,[string]$target,[string]$argsText){
  return [bool]$delete.Invoke($null,([object[]]@($link,$target,$argsText)))
+}
+function Migrate-Owned([string]$path,[string]$old,[string]$modern){
+ return [bool]$migrate.Invoke($null,([object[]]@($path,$old,$modern)))
 }
 if(!(Matches ([string[]]@('--repair-sensors')))){throw 'R356_CURRENT_MAIN_ARG_NOT_ACCEPTED'}
 Pass 'CURRENT_MAIN_REPAIR_ARGUMENT_ACCEPTED'
@@ -132,6 +136,34 @@ try{
  }
  Pass 'LEGACY_OWNED_SHORTCUT_UNINSTALL_STILL_WORKS'
 
+ $migrated=Join-Path $fixture 'migrating-owned-repair.lnk'
+ $link=$owner.CreateShortcut($migrated)
+ $link.TargetPath=$setup;$link.Arguments='/repair-sensors';$link.Save()
+ [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($link);$link=$null
+ if(!(IsOwned $migrated $setup '/repair-sensors')){throw 'R357_FIXTURE_NOT_LEGACY_OWNED'}
+ if(!(Migrate-Owned $migrated $setup $main) -or
+    !(IsOwned $migrated $main '--repair-sensors') -or
+    (IsOwned $migrated $setup '/repair-sensors')){
+     throw 'R357_VERIFIED_LEGACY_MIGRATION_NOT_MODERN_OWNED'
+ }
+ Pass 'REAL_FILE_REPLACE_UPGRADES_ONLY_OWNED_LEGACY_SHORTCUT'
+ $residual=@([IO.Directory]::GetFileSystemEntries($fixture)|
+    Where-Object { [IO.Path]::GetFileName($_) -like '.TBME_repair_*' })
+ if($residual.Count){throw 'R357_ATOMIC_MIGRATION_LEFT_STAGING_OR_BACKUP'}
+ Pass 'R357_BACKUP_AND_STAGE_RETIRED_WITHOUT_FOREIGN_DELETION'
+ $beforeModern=(Get-FileHash -LiteralPath $migrated -Algorithm SHA256).Hash
+ if(!(Migrate-Owned $migrated $setup $main) -or
+    (Get-FileHash -LiteralPath $migrated -Algorithm SHA256).Hash -cne $beforeModern){
+     throw 'R357_MODERN_MIGRATION_NOT_IDEMPOTENT'
+ }
+ Pass 'MODERN_MIGRATION_IDEMPOTENT'
+ if((Delete-Owner $migrated $setup '/repair-sensors') -or
+    !(Delete-Owner $migrated $main '--repair-sensors') -or
+    (Test-Path -LiteralPath $migrated)){
+    throw 'R357_MIGRATED_SHORTCUT_DID_NOT_RESPECT_UNINSTALL_OWNERSHIP'
+ }
+ Pass 'MIGRATED_SHORTCUT_REMOVED_ONLY_BY_MODERN_OWNER'
+
  $link=$owner.CreateShortcut($foreign)
  $link.TargetPath=$main;$link.Arguments='--repair-sensors --evil';$link.Save()
  [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($link);$link=$null
@@ -141,6 +173,16 @@ try{
   throw 'R356_FOREIGN_ARGUMENT_SHORTCUT_OVERWRITTEN_OR_REMOVED'
  }
  Pass 'FOREIGN_SIMILAR_NAMED_SHORTCUT_PRESERVED_EXACT_BYTES'
+ if((Migrate-Owned $foreign $setup $main) -or
+     (Get-FileHash -LiteralPath $foreign -Algorithm SHA256).Hash -cne $foreignHash){
+    throw 'R357_MIGRATION_OVERWROTE_FOREIGN_USER_SHORTCUT'
+ }
+ Pass 'FOREIGN_SHORTCUT_NOT_MIGRATED_OR_REWRITTEN'
+ $missing=Join-Path $fixture 'missing-repair.lnk'
+ if(!(Migrate-Owned $missing $setup $main) -or (Test-Path -LiteralPath $missing)){
+    throw 'R357_USER_DELETED_REPAIR_SHORTCUT_RECREATED'
+ }
+ Pass 'INTENTIONALLY_MISSING_SHORTCUT_PRESERVED'
  if([IO.File]::ReadAllText($canary) -cne 'R356_PRESERVE_FOREIGN'){
   throw 'R356_UNRELATED_CANARY_WAS_CHANGED'
  }
@@ -168,5 +210,5 @@ try{
  }
 }
 Pass 'OWNED_DISPOSABLE_SHORTCUT_FIXTURE_REMOVED'
-if($checks.Count -ne 15){throw ('R356_CHECK_COUNT_'+$checks.Count)}
-'R356_REPAIR_SHORTCUT_NATIVE_CONTRACT=15/15'
+if($checks.Count -ne 21){throw ('R356_CHECK_COUNT_'+$checks.Count)}
+'R356_R357_SHORTCUT_MIGRATION_NATIVE_CONTRACT=21/21'
