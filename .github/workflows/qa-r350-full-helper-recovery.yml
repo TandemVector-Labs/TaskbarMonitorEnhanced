@@ -83,14 +83,20 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           # The preceding pre-build gate proved this AppRoot did not exist.
+          # Directory.Move requires the same volume: isolate beside LocalAppData,
           # Build.ps1 runs the App selftests, which can create user-local
           # config/log files. Move only that post-build test-owned directory
           # aside; the privileged fixture must start from an absent AppRoot.
           $app=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TaskbarMonitorEnhanced'
-          $base=[IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\')
+          $base=[IO.Path]::GetFullPath([Environment]::GetFolderPath('LocalApplicationData')).TrimEnd('\')
           if([string]::IsNullOrWhiteSpace($base) -or
-             -not [IO.Path]::IsPathRooted($base)){throw 'R350_RUNNER_TEMP_NOT_TRUSTED'}
+             -not [IO.Path]::IsPathRooted($base)){throw 'R350_LOCAL_APPDATA_NOT_TRUSTED'}
           $backup=Join-Path $base ('R350_build_selftest_AppRoot_'+$env:GITHUB_RUN_ID)
+          if(-not [string]::Equals([IO.Path]::GetPathRoot($backup),
+                                   [IO.Path]::GetPathRoot($app),
+                                   [StringComparison]::OrdinalIgnoreCase)){
+            throw 'R350_BUILD_PROFILE_MOVE_DIFFERENT_VOLUME_REFUSED'
+          }
           if([IO.Directory]::Exists($backup) -or
              [IO.Path]::GetDirectoryName($backup) -cne $base){
             throw 'R350_BUILD_PROFILE_BACKUP_COLLISION'
@@ -146,8 +152,13 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $app=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TaskbarMonitorEnhanced'
-          $base=[IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\')
+          $base=[IO.Path]::GetFullPath([Environment]::GetFolderPath('LocalApplicationData')).TrimEnd('\')
           $backup=Join-Path $base ('R350_build_selftest_AppRoot_'+$env:GITHUB_RUN_ID)
+          if(-not [string]::Equals([IO.Path]::GetPathRoot($backup),
+                                   [IO.Path]::GetPathRoot($app),
+                                   [StringComparison]::OrdinalIgnoreCase)){
+            throw 'R350_BUILD_PROFILE_MOVE_DIFFERENT_VOLUME_REFUSED'
+          }
           if([IO.Directory]::Exists($backup)){
             if([IO.Directory]::Exists($app) -or
                [IO.Path]::GetDirectoryName($backup) -cne $base -or
