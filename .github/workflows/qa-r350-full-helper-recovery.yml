@@ -1,0 +1,99 @@
+name: QA R350 full original Helper cold replay vs preopened Administrator DELETE
+on:
+  pull_request:
+    paths:
+      - .github/workflows/qa-r350-full-helper-recovery.yml
+      - build/qa/Test-R350-FullHelperPreopenedDelete-PR10.ps1
+      - build/qa/Test-R350-PreopenedDelete-Actor-PR10.ps1
+      - installer/TBME_Setup_Elevated_Helper.ps1
+      - installer/TaskbarMonitorEnhanced_Setup.cs
+permissions:
+  contents: read
+  actions: read
+jobs:
+  cold-replay-vs-existing-admin-delete:
+    if: >-
+      github.repository == 'Usefull-Skills/TaskbarMonitorEnhanced' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 10 &&
+      github.head_ref == 'qa/r349-r093-r091-integration-20261019' &&
+      github.base_ref == 'sync/personal-main-9960a06d-review'
+    name: Full Helper PREPARED replay ${{ matrix.host }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: A
+            os: windows-2025
+          - host: B
+            os: windows-2022
+    env:
+      QA_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout exact proposed source without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Refuse owner hosts, nonadmin guest, preinstalled product and wrong source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_OS -cne 'Windows' -or
+             $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:GITHUB_EVENT_NAME -cne 'pull_request' -or
+             $env:GITHUB_REF -cne 'refs/pull/10/merge' -or
+             $env:GITHUB_HEAD_REF -cne 'qa/r349-r093-r091-integration-20261019' -or
+             $env:GITHUB_BASE_REF -cne 'sync/personal-main-9960a06d-review' -or
+             $env:GITHUB_REPOSITORY -cne 'Usefull-Skills/TaskbarMonitorEnhanced' -or
+             $env:COMPUTERNAME -match '(?i)EMAD-PC|ALIEMAD|SAEID|LAPTOP' -or
+             (git rev-parse HEAD).Trim() -cne $env:QA_SOURCE_SHA){
+            throw 'R350_QA_REFUSE_WRONG_HOST_SOURCE_OR_IDENTITY'
+          }
+          $admin=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+          if(!$admin.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
+            throw 'R350_QA_MISSING_EXISTING_ADMIN_TOKEN'
+          }
+          $protected=Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'TaskbarMonitorEnhanced'
+          $app=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TaskbarMonitorEnhanced'
+          if((Test-Path -LiteralPath $protected) -or (Test-Path -LiteralPath $app) -or
+             @(Get-ScheduledTask -TaskPath '\' -TaskName 'TaskbarMonitorEnhanced Sensor Broker' -ErrorAction SilentlyContinue|
+               Where-Object {$null -ne $_}).Count){
+            throw 'R350_QA_PREEXISTING_PRODUCT_OR_TASK'
+          }
+          'R350_FRESH_HOSTED_WINDOWS_ADMIN_PRECONDITION_PASS'
+      - name: Install pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.400
+      - name: Build exact bundled Setup Broker Supervisor and Main binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Build.ps1
+          if($LASTEXITCODE -ne 0 -or
+             !(Test-Path -LiteralPath build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe -PathType Leaf)){
+            throw 'R350_QA_BUILD_EXACT_SOURCE_FAILED'
+          }
+      - name: Run real PE Helper with production-generated PREPARED journal and separate already-admin process
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $native=Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+          $script=(Resolve-Path build/qa/Test-R350-FullHelperPreopenedDelete-PR10.ps1).Path
+          $root=(Resolve-Path .).Path
+          & $native -NoLogo -NoProfile -NonInteractive -File $script -HostLabel '${{ matrix.host }}' -SourceRoot $root
+          if($LASTEXITCODE -ne 0){throw 'R350_REAL_ORIGINAL_HELPER_PREOPENED_ADMIN_DELETE_ACCEPTANCE_FAILED'}
+      - name: Retain typed non-secret result, even when the native test fails
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: qa-r350-full-helper-${{ matrix.host }}-${{ github.event.pull_request.head.sha }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/R350_*/R350_FULL_HELPER_PREOPEN_DELETE.json
+            ${{ runner.temp }}/R350_*/ACTOR_READY.json
