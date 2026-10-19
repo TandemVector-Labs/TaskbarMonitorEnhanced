@@ -78,33 +78,43 @@ function Expect-Refusal([string]$name,[scriptblock]$action,[string]$reason){
 }
 $logJunction=$null
 $appJunction=$null
+# R080: live elevated Helper is IPC-only. Test disconnected fail-closed
+# behavior here; R080/R089/R090 exercise the real PID/nonce/SID-bound
+# named-pipe handoff and asInvoker persistence independently.
+$script:StatusPipeClient=$null
+$script:StatusLogs=[Collections.Generic.List[string]]::new()
+$priorLog='R328_PREEXISTING_LOG_UNTOUCHED'
+$priorResult='R328_PREEXISTING_RESULT_UNTOUCHED'
+[IO.File]::WriteAllText($LogPath,$priorLog)
+[IO.File]::WriteAllText($ResultPath,$priorResult)
 try{
-    Write-Log 'NATIVE_SAFE_LOG'
-    if(!(Test-Path -LiteralPath $LogPath -PathType Leaf) -or
-       (Get-Content -LiteralPath $LogPath -Raw) -notmatch 'NATIVE_SAFE_LOG'){
-       throw 'R328_SAFE_LOG_WRITE_FAILED'
-    }
-    Pass 'ORDINARY_USER_PROFILE_LOG_WORKS'
+    Expect-Refusal 'NO_IPC_LOG_REFUSES_BEFORE_USER_FILE_WRITE' {
+        Write-Log 'R328_NEVER_WRITE'
+    } 'SENSOR_STATUS_CHANNEL_CLOSED'
+    Expect-Refusal 'NO_IPC_RESULT_REFUSES_BEFORE_USER_FILE_WRITE' {
+        Write-Result 'READY' 'R328_NEVER_WRITE' 'NOT_STARTED' $null $false $false $true
+    } 'SENSOR_STATUS_CHANNEL_CLOSED'
 
-    Write-Result 'DEGRADED' 'Native no UAC mutation test' 'NOT_STARTED' $null $false $false $false
-    $result=Get-Content -LiteralPath $ResultPath -Raw |ConvertFrom-Json
-    if($result.Status -cne 'DEGRADED' -or $result.SensorHealthy -ne $false -or
-       $result.LogPath -cne $LogPath){throw 'R328_SAFE_RESULT_JSON_CONTRACT_FAILED'}
-    Pass 'ORDINARY_RESULT_JSON_CONTRACT_PRESERVED'
-
+    # Retain R328's detached path-boundary negative regressions for the
+    # legacy guard, but never use that guard to authorize elevated writes.
     Expect-Refusal 'WRONG_SINK_NAME_REFUSED' {
         Assert-SensorUserLogSink (Join-Path $base 'foreign.txt')
     } 'SENSOR_LOG_BOUNDARY_CHANGED_TARGET'
 
     $oldRoot=$LogsRoot
     $LogsRoot=Join-Path $base 'wrong-logs-root'
-    try{Expect-Refusal 'MUTATED_LOGS_ROOT_VARIABLE_REFUSED' { Write-Log 'NEVER_WRITE' } 'SENSOR_LOG_BOUNDARY_CHANGED_ROOT'}
-    finally{$LogsRoot=$oldRoot}
+    try{
+        Expect-Refusal 'MUTATED_LOGS_ROOT_VARIABLE_REFUSED' {
+            Assert-SensorUserLogSink $LogPath
+        } 'SENSOR_LOG_BOUNDARY_CHANGED_ROOT'
+    }finally{$LogsRoot=$oldRoot}
 
     $moved=Join-Path $AppRoot 'LogsMovedBeforeWrite'
     [IO.Directory]::Move($LogsRoot,$moved)
     try{
-        Expect-Refusal 'MISSING_LOG_FOLDER_REFUSED' { Write-Log 'NEVER_WRITE' } 'SENSOR_LOG_BOUNDARY_MISSING_LOG_DIRECTORY'
+        Expect-Refusal 'MISSING_LOG_FOLDER_REFUSED' {
+            Assert-SensorUserLogSink $LogPath
+        } 'SENSOR_LOG_BOUNDARY_MISSING_LOG_DIRECTORY'
     }finally{[IO.Directory]::Move($moved,$LogsRoot)}
 
     $moved=Join-Path $AppRoot 'LogsMovedForReparse'
@@ -112,10 +122,10 @@ try{
     New-Item -ItemType Junction -Path $LogsRoot -Target $external -ErrorAction Stop|Out-Null
     $logJunction=$LogsRoot
     Expect-Refusal 'POST_PREFLIGHT_LOG_JUNCTION_REFUSED' {
-        Write-Log 'FOREIGN_MODIFICATION_ATTEMPT'
+        Assert-SensorUserLogSink $LogPath
     } 'reparse'
     Expect-Refusal 'POST_PREFLIGHT_RESULT_JUNCTION_REFUSED' {
-        Write-Result 'READY' 'FOREIGN_MODIFICATION_ATTEMPT' 'NOT_STARTED' $null $false $false $true
+        Assert-SensorUserLogSink $ResultPath
     } 'reparse'
     if([IO.File]::ReadAllText($canary) -cne 'R328_CANARY_UNCHANGED' -or
        @(Get-ChildItem -LiteralPath $external -File).Count -ne 1){
@@ -128,33 +138,49 @@ try{
 
     $retired=Join-Path $base 'AppRootRetiredBeforeWrite'
     [IO.Directory]::Move($AppRoot,$retired)
-    New-Item -ItemType Junction -Path $AppRoot -Target $external -ErrorAction Stop | Out-Null
+    New-Item -ItemType Junction -Path $AppRoot -Target $external -ErrorAction Stop|Out-Null
     $appJunction=$AppRoot
     Expect-Refusal 'POST_PREFLIGHT_APPROOT_JUNCTION_REFUSED' {
-        Write-Log 'FOREIGN_ROOT_MODIFICATION'
+        Assert-SensorUserLogSink $LogPath
     } 'reparse'
     [IO.Directory]::Delete($appJunction)
     $appJunction=$null
     [IO.Directory]::Move($retired,$AppRoot)
 
-    $pre=$source.IndexOf('Assert-SensorBoundaryNoReparse $LogsRoot',[StringComparison]::Ordinal)
-    $create=$source.IndexOf('New-Item -ItemType Directory -Force -Path $LogsRoot',[StringComparison]::Ordinal)
-    $post=$source.IndexOf('Assert-SensorBoundaryNoReparse $LogsRoot',$create+1)
-    $functionStart=$source.IndexOf('function Write-Log(',[StringComparison]::Ordinal)
-    if($pre -lt 0 -or $create -le $pre -or $post -le $create -or $functionStart -le $post){
-        throw 'R328_CREATION_PATH_PRE_AND_POST_CHECK_ORDER_BROKEN'
+    if([IO.File]::ReadAllText($LogPath) -cne $priorLog -or
+       [IO.File]::ReadAllText($ResultPath) -cne $priorResult -or
+       [IO.File]::ReadAllText($canary) -cne 'R328_CANARY_UNCHANGED'){
+        throw 'R328_DISCONNECTED_HELPER_MUTATED_PREEXISTING_USER_FILES'
     }
-    Pass 'LOG_DIRECTORY_CREATION_PRE_AND_POST_BOUNDARY_ORDER'
+    Pass 'DISCONNECTED_PRIVILEGED_HELPER_NEVER_MODIFIES_USER_LOG_RESULT'
 
-    $scriptLines=$source
-    if($scriptLines.IndexOf('Assert-SensorUserLogSink $LogPath',[StringComparison]::Ordinal) -lt 0 -or
-       $scriptLines.IndexOf('Assert-SensorUserLogSink $ResultPath',[StringComparison]::Ordinal) -lt 0){
-        throw 'R328_BOTH_WRITE_SINKS_ARE_NOT_GUARDED'
+    # The actual production Write-Log/Write-Result functions must not
+    # regain direct user-owned writes. A source-only check complements
+    # the real native IPC tests later in this CI job.
+    $functions=@($ast.FindAll({
+        param($x) $x -is [Management.Automation.Language.FunctionDefinitionAst]
+    },$true))
+    $logFunction=@($functions|Where-Object Name -EQ 'Write-Log')
+    $resultFunction=@($functions|Where-Object Name -EQ 'Write-Result')
+    if($logFunction.Count -ne 1 -or $resultFunction.Count -ne 1){
+        throw 'R328_IPC_FUNCTIONS_NOT_UNIQUE'
     }
-    Pass 'BOTH_PRIVILEGED_USER_LOG_WRITES_HAVE_PATH_GUARDS'
+    $bodies=@($logFunction[0].Body.Extent.Text,$resultFunction[0].Body.Extent.Text)
+    if($bodies[0] -notmatch 'SENSOR_STATUS_CHANNEL_CLOSED' -or
+       $bodies[1] -notmatch 'SENSOR_STATUS_CHANNEL_CLOSED' -or
+       $bodies[1] -notmatch '\$script:StatusPipeClient\.Write\(' -or
+       $source.Contains('New-Item -ItemType Directory -Force -Path $LogsRoot')){
+        throw 'R328_PRIVILEGED_USER_LOG_WRITE_REINTRODUCED'
+    }
+    foreach($body in $bodies){
+        if($body -match '(?i)(WriteAllText|WriteAllBytes|Set-Content|Add-Content|Out-File|FileStream|TBMEScopedUserLogLease|File\]::Write)'){
+            throw 'R328_PRIVILEGED_USER_FILE_WRITE_REINTRODUCED'
+        }
+    }
+    Pass 'PRODUCTION_PRIVILEGED_STATUS_FUNCTIONS_IPC_ONLY'
 
     if($checks.Count -ne 12){throw ('R328_CHECK_COUNT_MISMATCH_'+$checks.Count)}
-    Write-Output ('R328_PRIVILEGED_HELPER_LOG_BOUNDARY_NET48_PASS='+$checks.Count+'/12')
+    Write-Output ('R328_PRIVILEGED_IPC_NO_USER_FILE_WRITE_NATIVE_PASS='+$checks.Count+'/12')
 }finally{
     if($logJunction -and [IO.Directory]::Exists($logJunction)){
         [IO.Directory]::Delete($logJunction)
