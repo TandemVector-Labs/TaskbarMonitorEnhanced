@@ -1,0 +1,129 @@
+{
+  "Status": "PASS_PINNED_PUBLIC_V173_MANAGED_RESOURCE_FOR_FUTURE_UPGRADE",
+  "Schema": 1,
+  "Version": "1.7.3",
+  "SourceCommit": "6001fce0e7900f2a1ec5172224f4c75224f3ac69",
+  "PublicSetupSHA256": "9EB5C54B4AE4C36F4035F115AC87403D9238AC66AA9AFE58DC5B211311D9774B",
+  "PublicMainSHA256": "6C8895C040D50C88AF6F6D018F9F70FB481C294B7DABCB083DB78EE35F5D8D1C",
+  "ManagedCount": 23,
+  "OwnerUpgradedManagedMatched": 22,
+  "RootSourceOptionalSHA256": "5BB6F7D089251474E29ECFBCBB59653D18FA8664FD783BAB311B61D947851D32",
+  "PrivateConfigIncluded": false,
+  "Rows": [
+    {
+      "Path": "TaskbarMonitorEnhanced.cs",
+      "SHA256": "5BB6F7D089251474E29ECFBCBB59653D18FA8664FD783BAB311B61D947851D32",
+      "Optional": true
+    },
+    {
+      "Path": "TaskbarMonitorEnhanced.exe",
+      "SHA256": "6C8895C040D50C88AF6F6D018F9F70FB481C294B7DABCB083DB78EE35F5D8D1C",
+      "Optional": false
+    },
+    {
+      "Path": "TaskbarMonitorEnhanced.exe.config",
+      "SHA256": "D2E51872D93F0793C02AD07DCBF8C2802F59708C666548372A4FDDDA5C7C5E4F",
+      "Optional": false
+    },
+    {
+      "Path": "TaskbarMonitorEnhanced.ico",
+      "SHA256": "0AD07C8E5DB434EE0403FCC92557C89D6E8EDF6A61FABD285C45518DF73A8EEF",
+      "Optional": false
+    },
+    {
+      "Path": "Source/TaskbarMonitorEnhanced.cs",
+      "SHA256": "5BB6F7D089251474E29ECFBCBB59653D18FA8664FD783BAB311B61D947851D32",
+      "Optional": false
+    },
+    {
+      "Path": "Source/StudioThemes.cs",
+      "SHA256": "7872BBDDC6DFD95FD8943CD5B714E47A9AB44D40AC15CBD8DA35F643768808CD",
+      "Optional": false
+    },
+    {
+      "Path": "Source/WallpaperStudio.cs",
+      "SHA256": "14DF1E87A49D6D791D4B9501E757E5E2EE466BCEF9618523CF0D1FCE584E461D",
+      "Optional": false
+    },
+    {
+      "Path": "Source/TaskbarGlass.cs",
+      "SHA256": "26B3E98C4E30361037EA35AE6326DE45C8087D8D562B7A7232D8FCF2CA589AAF",
+      "Optional": false
+    },
+    {
+      "Path": "Source/WorkspaceModels.cs",
+      "SHA256": "2146D1F369A89A684F504BAB71D6686A381E79260980F7E0ACBCBAC2B3484D19",
+      "Optional": false
+    },
+    {
+      "Path": "Source/MonitorWorkspace.cs",
+      "SHA256": "BA512B04F326DF09B6F9051E34D5CF0C6D24C9DC12DF03B948624DA7F5941F65",
+      "Optional": false
+    },
+    {
+      "Path": "Source/WorkspaceSelfTest.cs",
+      "SHA256": "F11D20C67056AC054C690C630044F717657DAB6FE26E5997EEBFF25947CF69B9",
+      "Optional": false
+    },
+    {
+      "Path": "Source/TaskbarMonitorSensorBroker.cs",
+      "SHA256": "D650CBC8861027F4A8EC3B48B71769840D2E6CB5F89DDBEBA949EE0CB6A72C0B",
+      "Optional": false
+    },
+    {
+      "Path": "Source/TaskbarMonitorSensorSupervisor.cs",
+      "SHA256": "DEDF15076D4908A96B0791AC46DAE8F773D4256D9961EE44625F701D5770C60B",
+      "Optional": false
+    },
+    {
+      "Path": "Source/TaskbarMonitorEnhanced_Setup.cs",
+      "SHA256": "25C2E5BD69BC4210757695501606942ED3ADD0C250848A2CC0B6AB4D8070578F",
+      "Optional": false
+    },
+    {
+      "Path": "Docs/LICENSE",
+      "SHA256": "3972DC9744F6499F0F9B2DBF76696F2AE7AD8AF9B23DDE66D6AF86C9DFB36986",
+      "Optional": false
+    },
+    {
+      "Path": "Docs/README.md",
+      "SHA256": "48026FC6A842A6BAEC519E04555A7291CD3DE339CBE59B9AAE635AAA1C1E8D37",
+      "Optional": false
+    },
+    {
+      "Path": "Docs/AUTHORS.md",
+      "SHA256": "0005B1D25E43C9CB1AF6C6428D7662F0F6E383D295CE66E5E7768ED8965BFA40",
+      "Optional": false
+    },
+    {
+      "Path": "Docs/COPYRIGHT_AND_ATTRIBUTION.md",
+      "SHA256": "503CF0194431F8FFE884014165111702061BB16B57C4BA118CE334489DBF4153",
+      "Optional": false
+    },
+    {
+      "Path": "Docs/AI_ASSISTED_DEVELOPMENT.md",
+      "SHA256": "7793264C5E9256888B069E88BD9ABAE692193CFEB6C28E21ECC8F69F3E3172EB",
+      "Optional": false
+    },
+    {
+      "Path": "Docs/THIRD_PARTY_NOTICES.md",
+      "SHA256": "7A8F14410B0B934447FB952E7AB0248B8D3342F88358F0F6B0D4332833D3F559",
+      "Optional": false
+    },
+    {
+      "Path": "Docs/RELEASE_NOTES_v1.7.3.md",
+      "SHA256": "CA1A8889BA56AA802BD9A2E2C0A45F885004DB5868702EBAE1076BF52C0F7683",
+      "Optional": false
+    },
+    {
+      "Path": "Docs/UPSTREAM_REFERENCE_GPL_NOTICE.md",
+      "SHA256": "14B86621663CDFB7A6750D9E5ABFE7BE8AA72433A56AA08382698BA09261A293",
+      "Optional": false
+    },
+    {
+      "Path": "Uninstall.exe",
+      "SHA256": "9EB5C54B4AE4C36F4035F115AC87403D9238AC66AA9AFE58DC5B211311D9774B",
+      "Optional": false
+    }
+  ]
+}

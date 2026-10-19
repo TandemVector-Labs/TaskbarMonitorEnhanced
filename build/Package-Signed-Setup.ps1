@@ -10,10 +10,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $Root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $UnsignedMain=Join-Path $Root 'build\_out\App\TaskbarMonitorEnhanced.exe'
-$UnsignedSetup=Join-Path $Root 'build\_out\Setup\TaskbarMonitorEnhanced_Setup_1.7.2.exe'
+$UnsignedSetup=Join-Path $Root 'build\_out\Setup\TaskbarMonitorEnhanced_Setup_1.7.8.exe'
 $Project=Join-Path $PSScriptRoot 'TaskbarMonitorEnhanced_Setup.csproj'
 $StageBase=if($ContractFixtureOnly){Join-Path $Root 'artifacts\_r80_contract_only'}else{Join-Path $Root 'artifacts\signed\Setup\TO_SIGN'}
-$Setup=Join-Path $StageBase 'TaskbarMonitorEnhanced_Setup_1.7.2.exe'
+$Setup=Join-Path $StageBase 'TaskbarMonitorEnhanced_Setup_1.7.8.exe'
 $Proof=Join-Path $StageBase 'EMBEDDED_MAIN_PROOF.json'
 $Verification=Join-Path $StageBase 'SETUP_VERIFY.json'
 $CreatedStage=$false

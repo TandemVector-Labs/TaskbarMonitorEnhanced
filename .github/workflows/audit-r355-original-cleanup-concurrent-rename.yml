@@ -1,0 +1,102 @@
+name: R355 original compiled Setup cleanup vs independent live root rename (disposable Windows)
+on:
+  push:
+    branches: [audit/r355-deferred-cleanup-directory-pins]
+    paths:
+      - build/Test-R355-RealCleanupConcurrentRename-Native.ps1
+      - build/Test-R355-RealCleanupRenameActor-Native.ps1
+      - installer/TaskbarMonitorEnhanced_Setup.cs
+      - build/Build.ps1
+      - .github/workflows/audit-r355-original-cleanup-concurrent-rename.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  real-deferred-cleanup:
+    name: R355 live original ${{ matrix.host }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [LiveRace]
+        host: [A, B]
+        include:
+          - host: A
+            os: windows-2025
+          - host: B
+            os: windows-2022
+    steps:
+      - name: Checkout exact head without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Refuse non-hosted or preexisting real product
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or
+             $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or
+             $env:GITHUB_REPOSITORY -cne 'GOD13emad/TaskbarMonitorEnhanced' -or
+             $env:GITHUB_REF -cne 'refs/heads/audit/r355-deferred-cleanup-directory-pins' -or
+             $env:COMPUTERNAME -match '(?i)EMAD-PC|ALIEMAD|SAEID|LAPTOP' -or
+             (git rev-parse HEAD).Trim() -cne '${{ github.sha }}'){
+             throw 'R354_REFUSE_WRONG_SOURCE_OR_NONDISPOSABLE_RUNNER'
+          }
+          $app=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TaskbarMonitorEnhanced'
+          $protected=Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'TaskbarMonitorEnhanced'
+          if((Test-Path -LiteralPath $app) -or (Test-Path -LiteralPath $protected) -or
+             @(Get-ScheduledTask -TaskName 'TaskbarMonitorEnhanced Sensor Broker' -TaskPath '\' -ErrorAction SilentlyContinue|Where-Object {$null -ne $_}).Count){
+             throw 'R354_EXISTING_OWNER_INSTALLATION_OR_SENSOR_REFUSED'
+          }
+          $who=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+          if(!$who.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
+             throw 'R354_ALREADY_ADMIN_HOSTED_RUNNER_REQUIRED'
+          }
+          $marker=Join-Path $env:RUNNER_TEMP 'R354_PREBUILD_FRESH_GUEST.json'
+          if(Test-Path -LiteralPath $marker){throw 'R354_PREBUILD_MARKER_PREEXISTS'}
+          $proof=[ordered]@{
+            Schema=1;Revision='R354';SourceCommit=$env:GITHUB_SHA
+            Host=$env:COMPUTERNAME
+            AppRootAbsentBeforeBuild=$true;ProtectedRootAbsentBeforeBuild=$true
+            TaskAbsentBeforeBuild=$true
+          }
+          [IO.File]::WriteAllText($marker,($proof|ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
+          'R354_FRESH_DISPOSABLE_WINDOWS_GUEST_PASS'
+      - name: Install pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.400
+      - name: Build unmodified real production Setup PE and four components
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Build.ps1
+          if($LASTEXITCODE -ne 0 -or
+             !(Test-Path -LiteralPath build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe)){
+             throw 'R354_REAL_PRODUCT_SETUP_BUILD_FAILED'
+          }
+      - name: Run original compiled Cleanup process with separate native live rename actor
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $native=Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+          $script=(Resolve-Path build/Test-R355-RealCleanupConcurrentRename-Native.ps1).Path
+          $source=(Resolve-Path .).Path
+          & $native -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script -HostLabel '${{ matrix.host }}' -Mode '${{ matrix.mode }}' -SourceRoot $source
+          if($LASTEXITCODE -ne 0){
+            throw 'R355_FULL_ORIGINAL_LIVE_RENAME_CLEANUP_GUEST_FAILED'
+          }
+      - name: Retain real original Setup cleanup typed receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R355-full-live-${{ matrix.host }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/R354_*/R354_ORIGINAL_DEFERRED_CLEANUP.json
+            ${{ runner.temp }}/R354_*/R355_LIVE_RENAME_ACTOR.json
+          retention-days: 7
+          if-no-files-found: warn

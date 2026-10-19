@@ -1,0 +1,92 @@
+name: R282 Pinned 1.7.5 fixture and immutable 1.7.6 cold journal recovery
+
+on:
+  push:
+    branches: [test/r282-disposable-abrupt-update-recovery]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  original-release-cold-recovery:
+    name: Public v1.7.6 Setup / ${{ matrix.phase }} / pinned-file guest ${{ matrix.host }}
+    timeout-minutes: 20
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: A
+            phase: PREPARED
+            os: windows-2025
+          - host: B
+            phase: COMMITTING
+            os: windows-2022
+    steps:
+      - name: Checkout test-only source on exact hosted revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Verify PowerShell 5.1 parser and disposable execution contract
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or
+             $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or
+             $env:COMPUTERNAME -match 'EMAD-PC'){throw 'R282_UNSAFE_NON_DISPOSABLE_HOST'}
+          if((git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA){throw 'R282_SOURCE_CHECKOUT_MISMATCH'}
+          $p=(Resolve-Path build/Test-AbruptStageRecovery-R282.ps1).Path
+          $tokens=$null; $errors=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($p,[ref]$tokens,[ref]$errors)
+          if(@($errors).Count){$errors | ForEach-Object { Write-Output $_.Message };throw 'R282_POWERSHELL_PARSER_FAILED'}
+          $source=[IO.File]::ReadAllText($p)
+          if($source.Contains('[string]$args') -or !$source.Contains('[string]$arguments') -or
+             !$source.Contains('$si.Arguments=$arguments')){
+             throw 'R282_BLOCK_RESERVED_POWERSHELL_AUTOMATIC_ARGS_PARAMETER'
+          }
+          if(!(Test-Path build/official-v175-managed.json)){throw 'R282_PREDECESSOR_PINNED_FIXTURE_MISSING'}
+          'R282_EXACT_HOSTED_GUARDS_AND_TEST_PARSER_PASS'
+
+      - name: Build exact resource-pinned prior fixture, kill test helper, recover with real public Setup
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Test-AbruptStageRecovery-R282.ps1 -HostLabel '${{ matrix.host }}' -Phase '${{ matrix.phase }}'
+          $receipt=Join-Path $env:RUNNER_TEMP 'TBME_R282_${{ matrix.host }}_${{ matrix.phase }}/R282_ABRUPT_RECOVERY.json'
+          if(!(Test-Path $receipt)){throw 'R282_DURABLE_RECEIPT_ABSENT'}
+          $r=Get-Content $receipt -Raw|ConvertFrom-Json
+          if($r.Status -cne 'PASS_DISPOSABLE_CHILD_KILLED_THEN_OFFICIAL_INSTALLER_AUTO_RECOVERED' -or
+             $r.SourceBranchCommit -cne $env:GITHUB_SHA -or
+             $r.HostLabel -cne '${{ matrix.host }}' -or
+             $r.Scenario -cne '${{ matrix.phase }}' -or
+             $r.Official175ManagedFixtureRowsExact -ne 22 -or
+             $r.OriginalOfficial175InstallerFreshInstallPerformed -ne $false -or
+             $r.HistoricalV175FilesExtractedFromPinnedPublishedInstallerResources -ne $true -or
+             $r.PrivilegedSensorDriverInstallPerformedForTest -ne $false -or
+             $r.StagingHelperExternalProcessKilled -ne $true -or
+             $r.NativeSetupAutomaticJournalRecoveryAndInPlaceUpgrade -ne $true -or
+             $r.ExactProtectedUserDataSHA256Preserved -ne $true -or
+             $r.SingleCanonicalUserRoot -ne $true -or
+             $r.RealPhysicalMainsCut -ne $false -or
+             $r.ActualSetupExecutableProcessKilled -ne $false -or
+             $r.NoOriginalOwnerPcTouched -ne $true){throw 'R282_TYPED_DISPOSABLE_RECOVERY_NOT_ACCEPTED'}
+          if('${{ matrix.phase }}' -ceq 'COMMITTING' -and $r.ManagedComponentsPartiallyReplacedBeforeKill -ne 2){throw 'R282_PARTIAL_COMMIT_NOT_PROVEN'}
+          'R282_VERIFIED_EXACT_OFFICIAL_176_AFTER_REAL_TEST_CHILD_KILL=PASS'
+
+      - name: Preserve the bounded individual fail/pass receipt on hosted runner
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R282-abrupt-${{ matrix.host }}-${{ matrix.phase }}
+          if-no-files-found: warn
+          retention-days: 21
+          path: |
+            ${{ runner.temp }}/TBME_R282_${{ matrix.host }}_${{ matrix.phase }}/R282_ABRUPT_RECOVERY.json
+            ${{ runner.temp }}/TBME_R282_${{ matrix.host }}_${{ matrix.phase }}/ARMED.json
+            ${{ runner.temp }}/TBME_R282_${{ matrix.host }}_${{ matrix.phase }}/ARMED.error.txt
+            ${{ runner.temp }}/TBME_R282_${{ matrix.host }}_${{ matrix.phase }}/R282_INSTALL_DIAGNOSTIC.json

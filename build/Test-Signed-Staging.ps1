@@ -6,9 +6,9 @@ Set-StrictMode -Version Latest
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $stage=Join-Path $root 'artifacts\signed'
 $origMain=Join-Path $root 'build\_out\App\TaskbarMonitorEnhanced.exe'
-$origSetup=Join-Path $root 'build\_out\Setup\TaskbarMonitorEnhanced_Setup_1.7.2.exe'
+$origSetup=Join-Path $root 'build\_out\Setup\TaskbarMonitorEnhanced_Setup_1.7.8.exe'
 $targetMain=Join-Path $stage 'Main\TaskbarMonitorEnhanced.exe'
-$targetSetup=Join-Path $stage 'Setup\TaskbarMonitorEnhanced_Setup_1.7.2.exe'
+$targetSetup=Join-Path $stage 'Setup\TaskbarMonitorEnhanced_Setup_1.7.8.exe'
 $created=@()
 if((Test-Path -LiteralPath $stage) -or
    !(Test-Path -LiteralPath $origMain -PathType Leaf) -or
@@ -26,7 +26,7 @@ if(!(Test-Path -LiteralPath $manifest -PathType Leaf)){throw 'R75 MANIFEST REQUI
 $m=Get-Content -LiteralPath $manifest -Raw|ConvertFrom-Json
 $mapping=@{
     'TaskbarMonitorEnhanced.exe'=$hashMain
-    'TaskbarMonitorEnhanced_Setup_1.7.2.exe'=$hashSetup
+    'TaskbarMonitorEnhanced_Setup_1.7.8.exe'=$hashSetup
 }
 foreach($entry in $m.Outputs){
     if($mapping.ContainsKey([string]$entry.Name)){

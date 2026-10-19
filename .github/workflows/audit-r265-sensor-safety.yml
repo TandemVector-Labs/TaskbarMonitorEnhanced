@@ -1,0 +1,108 @@
+name: R265 - Scoped cross-account sensor helper guard on disposable Windows
+on:
+  push:
+    branches:
+      - release/r265-v175-sensor-crossuser-safety
+permissions:
+  contents: read
+jobs:
+  guest-sensor-guard:
+    name: "R265 no-driver guard-only cross-user test ${{ matrix.guest }}"
+    runs-on: ${{ matrix.system }}
+    timeout-minutes: 17
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - guest: A
+            system: windows-2025
+          - guest: B
+            system: windows-2022
+    steps:
+      - name: Checkout exact unmodified public v1.7.4 ancestor
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Ensure only helper/test/workflow changed; disposable admin host
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or
+             $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or
+             $env:GITHUB_REPOSITORY -cne 'GOD13emad/TaskbarMonitorEnhanced' -or
+             ($env:GITHUB_REF -cne 'refs/heads/release/r265-v175-sensor-crossuser-safety' -and $env:GITHUB_REF -cne 'refs/heads/main') -or
+             $env:COMPUTERNAME -match '(?i)EMAD|ALI|LAPTOP'){
+             throw 'R265_REJECT_NON_DISPOSABLE_HOST'
+          }
+          $base='1375d719989aa93966bae445ac63b9a415f637ad'
+          git merge-base --is-ancestor $base HEAD
+          if($LASTEXITCODE -ne 0){throw 'R265_EXACT_RELEASE_SOURCE_NOT_BASE'}
+          $actual=@(git diff --name-only $base HEAD)
+          $allowed=@(
+            '.github/workflows/audit-r265-sensor-safety.yml',
+            'build/Test-R265-CrossUserGuard.ps1',
+            'installer/TBME_Setup_Elevated_Helper.ps1'
+          )
+          if($actual.Count -lt 14 -or $actual -cnotcontains 'installer/TBME_Setup_Elevated_Helper.ps1' -or $actual -cnotcontains 'installer/TaskbarMonitorEnhanced_Setup.cs'){
+             throw 'R265_VERSIONED_PRODUCT_SOURCE_GUARD_NOT_STAGED'
+          }
+          $files=@(
+            @{File='installer/TBME_Setup_Elevated_Helper.ps1';SHA='84A7DC21012A63C5959447D7234B365CF926028016A81B742F891951B191E7FB'},
+            @{File='build/Test-R265-CrossUserGuard.ps1';SHA='153268FBDC57F65B8AEC56ED80832F4C6EF5839A3640D0233DF2D7B4ED4606E2'}
+          )
+          foreach($item in $files){
+            $path=(Resolve-Path $item.File).Path
+            $str=[IO.File]::ReadAllText($path,[Text.Encoding]::UTF8)
+            $lf=$str.Replace(([string][char]13+[string][char]10),([string][char]10)).Replace(([string][char]13),([string][char]10))
+            $sha=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($lf)))
+            if($sha -cne $item.SHA){throw 'R265_SOURCE_DIGEST_CHANGED'}
+            $tok=$null;$err=$null
+            [void][Management.Automation.Language.Parser]::ParseFile($path,[ref]$tok,[ref]$err)
+            if(@($err).Count){throw 'R265_WINDOWS_POWERSHELL51_SYNTAX_FAILED'}
+          }
+          $isAdmin=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+          if(!$isAdmin.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
+             throw 'R265_NO_ADMIN_ON_GUEST_NO_ESCALATION'
+          }
+          if(Get-ScheduledTask -TaskName 'TaskbarMonitorEnhanced Sensor Broker' -ErrorAction SilentlyContinue){
+             throw 'R265_EXISTING_REAL_TASK_MUST_NOT_BE_TOUCHED'
+          }
+          if(Test-Path (Join-Path $env:ProgramFiles 'TaskbarMonitorEnhanced\SensorBroker')){
+             throw 'R265_EXISTING_REAL_BROKER_MUST_NOT_BE_TOUCHED'
+          }
+          'R265_FRESH_VM_TEST_ONLY_SCOPE_PIN=PASS'
+      - name: Test actual owner SID guard on both helper modes without executing later side effects
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Test-R265-CrossUserGuard.ps1 -HostLabel '${{ matrix.guest }}'
+          $p=Join-Path $env:RUNNER_TEMP 'TBME_R265_${{ matrix.guest }}/R265_CROSSUSER.json'
+          if(!(Test-Path $p)){throw 'R265_TEST_RECEIPT_NOT_FOUND'}
+          $r=Get-Content $p -Raw|ConvertFrom-Json
+          if($r.Revision -cne 'R265' -or
+             $r.Status -cne 'PASS_OTHER_USER_SENSOR_TASK_PRESERVED_AND_SAME_OWNER_GUARD_ALLOWED' -or
+             $r.Guest -cne '${{ matrix.guest }}' -or
+             @($r.OtherUserModesRefused).Count -ne 4 -or
+             @($r.SameUserModesPermitted).Count -ne 4 -or
+             $r.VerifiedRealFullHelperEarlyRefusal -ne $true -or
+             $r.TestOwnedTaskDeleted -ne $true -or
+             $r.GuestUserAccountDeleted -ne $true -or
+             $r.ExactProductionHelperAfterGuardWasNotExecuted -ne $true -or
+             $r.NoSensorTaskTriggered -ne $true -or
+             $r.NoPawnIODriverOrSetupExecuted -ne $true -or
+             $r.OwnerPCAndPublicV174Unchanged -ne $true){
+             throw 'R265_GENUINE_VM_GUARD_SCOPE_NOT_ACCEPTED'
+          }
+          'R265_OTHER_USER_TASK_PRESERVED_BOTH_MODES_AND_SAME_OWNER_PERMITTED=PASS'
+          $global:LASTEXITCODE=0
+      - name: Preserve disposable bounded acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R265-guard-${{ matrix.guest }}
+          if-no-files-found: warn
+          retention-days: 21
+          path: |
+            ${{ runner.temp }}/TBME_R265_${{ matrix.guest }}/R265_CROSSUSER.json

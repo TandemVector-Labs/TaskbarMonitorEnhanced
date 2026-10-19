@@ -1,4 +1,4 @@
-# R127: retain R80 independent read-only verification and accept versioned 1.7.2 patch filename.
+# R127: retain R80 independent read-only verification and accept versioned 1.7.5 patch filename.
 # R80: independent read-only verification that a Setup's exact embedded Main PE bytes
 # equal the SHA256 of an independently pinned, already-signed Main distribution file.
 [CmdletBinding()]
@@ -11,7 +11,7 @@ $ErrorActionPreference='Stop'
 if($ExpectedMainSHA256 -notmatch '^[0-9a-fA-F]{64}$'){throw 'R80 EXPECTED MAIN SHA NOT 64 HEX'}
 $path=[IO.Path]::GetFullPath($SetupExe)
 if(!(Test-Path -LiteralPath $path -PathType Leaf) -or
-   ([IO.Path]::GetFileName($path) -cnotin @('TaskbarMonitorEnhanced_Setup_1.7.0.exe','TaskbarMonitorEnhanced_Setup_1.7.2.exe'))){
+   ([IO.Path]::GetFileName($path) -cnotin @('TaskbarMonitorEnhanced_Setup_1.7.0.exe','TaskbarMonitorEnhanced_Setup_1.7.5.exe','TaskbarMonitorEnhanced_Setup_1.7.6.exe','TaskbarMonitorEnhanced_Setup_1.7.7.exe','TaskbarMonitorEnhanced_Setup_1.7.8.exe'))){
     throw 'R80 SETUP EXE MISSING OR WRONG FILE NAME'
 }
 $setupHash=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash

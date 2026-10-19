@@ -4,11 +4,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $Root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $original=Join-Path $Root 'build\_out\App\TaskbarMonitorEnhanced.exe'
-$setupOrig=Join-Path $Root 'build\_out\Setup\TaskbarMonitorEnhanced_Setup_1.7.2.exe'
+$setupOrig=Join-Path $Root 'build\_out\Setup\TaskbarMonitorEnhanced_Setup_1.7.8.exe'
 $inputDir=Join-Path $Root 'artifacts\_r80_contract_input'
 $inputFile=Join-Path $inputDir 'TaskbarMonitorEnhanced.exe'
 $stageDir=Join-Path $Root 'artifacts\_r80_contract_only'
-$stageExe=Join-Path $stageDir 'TaskbarMonitorEnhanced_Setup_1.7.2.exe'
+$stageExe=Join-Path $stageDir 'TaskbarMonitorEnhanced_Setup_1.7.8.exe'
 $originalMainSHA=(Get-FileHash -LiteralPath $original -Algorithm SHA256).Hash
 $originalSetupSHA=(Get-FileHash -LiteralPath $setupOrig -Algorithm SHA256).Hash
 if((Test-Path -LiteralPath $inputDir) -or (Test-Path -LiteralPath $stageDir)){
@@ -70,7 +70,7 @@ try{
         # Cleanup exact owned files only. Unknown files survive; never delete personal state.
         foreach($d in @($stageDir,$inputDir)){
             if(Test-Path -LiteralPath $d){
-                $allowed=if($d -ceq $stageDir){@('TaskbarMonitorEnhanced_Setup_1.7.2.exe','TaskbarMonitorEnhanced_Setup_1.7.2.exe.config','SETUP_VERIFY.json','EMBEDDED_MAIN_PROOF.json')}
+                $allowed=if($d -ceq $stageDir){@('TaskbarMonitorEnhanced_Setup_1.7.8.exe','TaskbarMonitorEnhanced_Setup_1.7.8.exe.config','SETUP_VERIFY.json','EMBEDDED_MAIN_PROOF.json')}
                          else{@('TaskbarMonitorEnhanced.exe')}
                 $found=@(Get-ChildItem -LiteralPath $d -Force)
                 if(@($found|Where-Object {$_.PSIsContainer -or $_.Name -notin $allowed}).Count -gt 0){

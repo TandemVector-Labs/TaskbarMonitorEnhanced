@@ -1,0 +1,87 @@
+name: R339 genuine second Windows SID vs protected ProgramFiles (disposable)
+on:
+  push:
+    branches: [audit/r339-two-user-protected-broker]
+    paths:
+      - build/Test-R339-ProtectedProgramFiles-TwoUsers-Native.ps1
+      - build/Test-R339-SecondAccount-Actor.ps1
+      - .github/workflows/audit-r339-cross-user-protected-programfiles.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  cross-user-protected-programfiles:
+    name: R339 native Windows ${{ matrix.host }} real two users
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: A
+            os: windows-2025
+          - host: B
+            os: windows-2022
+    steps:
+      - name: Checkout exact test-only source with no credential persistence
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require only disposable hosted Windows exact SHA before native account or protected root mutation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or
+             $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or
+             $env:GITHUB_REPOSITORY -cne 'GOD13emad/TaskbarMonitorEnhanced' -or
+             $env:GITHUB_REF -cne 'refs/heads/audit/r339-two-user-protected-broker' -or
+             $env:COMPUTERNAME -match '(?i)EMAD-PC|ALIEMAD|SAEID|LAPTOP' -or
+             (git rev-parse HEAD).Trim() -cne '${{ github.sha }}'){
+            throw 'R339_REFUSE_NON_DISPOSABLE_OR_NONPINNED_HOST'
+          }
+          $program=[Environment]::GetFolderPath('ProgramFiles')
+          $app=Join-Path $program 'TaskbarMonitorEnhanced'
+          $local=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TaskbarMonitorEnhanced'
+          if((Test-Path -LiteralPath $app) -or (Test-Path -LiteralPath $local)){
+            throw 'R339_REAL_PRODUCT_INSTALL_OR_PREEXISTING_APP_ON_GUEST'
+          }
+          $token=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+          if(!$token.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
+            throw 'R339_ALREADY_ADMIN_TOKEN_REQUIRED_NOT_REAL_UAC'
+          }
+          'R339_EXACT_DISPOSABLE_HOST_AND_NO_EXISTING_PRODUCT_PASS'
+      - name: Install pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.400
+      - name: Compile actual candidate Supervisor and Broker (never launch either)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Build.ps1
+          if($LASTEXITCODE -ne 0 -or
+            !(Test-Path -LiteralPath build/_out/Supervisor/TaskbarMonitorSensorSupervisor.exe) -or
+            !(Test-Path -LiteralPath build/_out/Broker/TaskbarMonitorSensorBroker.exe)){
+            throw 'R339_COMPILED_PROTECTED_BINARIES_ABSENT'
+          }
+          'R339_CANDIDATE_ALL_FOUR_COMPONENTS_BUILD_SUCCESS'
+      - name: Run two genuine local Windows accounts against admin-owned protected ProgramFiles
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $native=Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+          $runner=(Resolve-Path build/Test-R339-ProtectedProgramFiles-TwoUsers-Native.ps1).Path
+          $source=(Resolve-Path .).Path
+          & $native -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $runner -HostLabel '${{ matrix.host }}' -CandidateRoot $source
+          if($LASTEXITCODE -ne 0){throw 'R339_REAL_SECOND_USER_PROTECTED_PROGRAMFILES_SECURITY_GATE_FAILED'}
+      - name: Retain typed two-user guest evidence without public scanner upload
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R339-${{ matrix.host }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/R339_*/R339_PROTECTED_PROGRAMFILES_TWO_USERS.json
+          retention-days: 7
+          if-no-files-found: warn

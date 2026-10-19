@@ -1,4 +1,13 @@
 # Project Knowledge / Evidence Record — Taskbar Monitor Enhanced
+<!-- TBME:PUBLIC-KNOWLEDGE:R285 -->
+## 2026-10-17 / R285 — release and owner verification public summary (redacted derivative)
+
+- Versioned crash fix: private/native Windows-hosted actual v1.7.6 Setup interruption exposed a stuck updater-owned .restore scratch; R284 v1.7.7 reconstructs only owned scratch after journal/index validation. PR #76 merged dc68cf448173bd0808d1dfa54bc9e9bf7ca20aad; exact-main Build CI 38965519302 and Windows A/B crash recovery CI 38965519445 PASS. Real physical power cut was excluded by owner.
+- Public immutable seven-asset v1.7.7 GitHub release ID 415382091, Setup SHA 395AEE56006F55FD5DCCFB52E1519088CE01A10386840D7008C6BA900136A06D, Main SHA A6D4BFD00C918C0601A12D185F414E92F2B6A85927042B811537B0BC37606253; independent artifact G16 PASS. Official v1.7.6 retained unchanged.
+- Real owner same-root one-per-user v1.7.6→v1.7.7 upgrade Exit 0; 26 original managed/protected files archived, all five shipped build outputs matched, config and Glass zero-alpha preserved, one Main/one Supervisor/two Brokers, no second HKLM install. Actual CPU 95C app notification dispatch logged; OS audio/banner not independently heard or seen.
+- Outstanding external items only: original reporter WinRing0 file SHA/source (Issue #6) and actual owner-app OS alert presentation/audio observation. Global machinewide singleton and signed-publisher attestation are explicitly outside accepted per-user unsigned scope; do not disable Defender.
+
+
 
 ## 2026-09-26 — R22 final identity/build/install/runtime acceptance
 
