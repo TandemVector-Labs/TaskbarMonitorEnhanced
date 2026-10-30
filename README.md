@@ -1,5 +1,9 @@
 # Taskbar Monitor Enhanced
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/TandemVector-Labs/.github/main/brand/social/TaskbarMonitorEnhanced.png" alt="Taskbar Monitor Enhanced visual project card" width="720">
+</p>
+
 **Live Windows taskbar monitoring, an eight-page Performance Workspace, and 49 built-in themes.**
 
 **Stable / Latest:** [official immutable GitHub release](https://github.com/GOD13emad/TaskbarMonitorEnhanced/releases/latest). Use the **one versioned Windows x64 installer** for a fresh install or supported in-place update; see [Download and verification](DOWNLOAD.md). Historical releases are preserved unchanged.
