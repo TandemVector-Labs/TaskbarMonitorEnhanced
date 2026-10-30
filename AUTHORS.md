@@ -3,7 +3,7 @@
 ## Taskbar Monitor Enhanced
 
 **Lead Developer & Maintainer**  
-Ali-Akbar Emadeddin  
+Ali-Akbar Emadeddin
 Email: `aliemad1324@gmail.com`  
 GitHub: `GOD13emad`
 
