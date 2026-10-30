@@ -84,6 +84,6 @@ The validation host has one physical monitor. Deterministic taskbar selection is
 
 ## Authorship and license
 
-**Lead Developer & Maintainer:** Dr. Ali-Akbar Emadeddin (`GOD13emad`).
+**Lead Developer & Maintainer:** Ali-Akbar Emadeddin (`GOD13emad`).
 
 Derived from `leandrosa81/taskbar-monitor` with GPL/upstream attribution preserved. Licensed under GNU GPL v3.0. See [License](LICENSE), [Authors](AUTHORS.md), [Attribution](COPYRIGHT_AND_ATTRIBUTION.md), [Third-party notices](THIRD_PARTY_NOTICES.md) and [AI-assisted development disclosure](AI_ASSISTED_DEVELOPMENT.md).
