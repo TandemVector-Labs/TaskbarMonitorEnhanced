@@ -1,0 +1,90 @@
+name: R347 real privileged process rename vs protected Broker handle lease (disposable Windows)
+on:
+  push:
+    branches: [audit/r347-protected-broker-handle-lease]
+    paths:
+      - installer/TBME_Setup_Elevated_Helper.ps1
+      - build/Test-R347-PrivilegedDirectoryLease-Native.ps1
+      - build/Test-R347-OtherAdminRename-Actor.ps1
+      - .github/workflows/audit-r347-protected-broker-lease.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  privileged-concurrent-rename:
+    name: R347 real two privileged process handles ${{ matrix.host }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: A
+            os: windows-2025
+          - host: B
+            os: windows-2022
+    steps:
+      - name: Checkout exact candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Enforce disposable already-admin Windows and no preexisting product
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or
+             $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or
+             $env:GITHUB_REPOSITORY -cne 'GOD13emad/TaskbarMonitorEnhanced' -or
+             $env:GITHUB_REF -cne 'refs/heads/audit/r347-protected-broker-handle-lease' -or
+             $env:COMPUTERNAME -match '(?i)EMAD-PC|ALIEMAD|SAEID|LAPTOP' -or
+             (git rev-parse HEAD).Trim() -cne '${{ github.sha }}'){
+            throw 'R347_HOST_OR_COMMIT_NOT_DISPOSABLE'
+          }
+          $root=Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'TaskbarMonitorEnhanced'
+          $app=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TaskbarMonitorEnhanced'
+          if((Test-Path -LiteralPath $root) -or
+             (Test-Path -LiteralPath (Join-Path $app 'TaskbarMonitorEnhanced.exe')) -or
+             @(Get-ScheduledTask -TaskName 'TaskbarMonitorEnhanced Sensor Broker' -TaskPath '\' -ErrorAction SilentlyContinue | Where-Object {$null -ne $_}).Count){
+            throw 'R347_HOST_ALREADY_HAS_REAL_PRODUCT'
+          }
+          $isAdmin=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+          if(-not $isAdmin.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
+            throw 'R347_NO_EXISTING_ADMIN_TOKEN'
+          }
+          'R347_DISPOSABLE_NO_PRODUCT_PRECONDITIONS_PASS'
+      - name: Install pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.400
+      - name: Build all four original Framework projects with embedded lease
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Build.ps1
+          if($LASTEXITCODE -ne 0 -or
+             !(Test-Path -LiteralPath build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe)){
+            throw 'R347_COMPILED_ORIGINAL_SETUP_MISSING'
+          }
+          'R347_EXACT_COMPILED_PRODUCT_BUILD_PASS'
+      - name: Real other admin process rename and junction refusal on private test-only protected root
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $native=Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+          $test=(Resolve-Path build/Test-R347-PrivilegedDirectoryLease-Native.ps1).Path
+          $source=(Resolve-Path .).Path
+          & $native -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $test -HostLabel '${{ matrix.host }}' -SourceRoot $source
+          if($LASTEXITCODE -ne 0){throw 'R347_TRUE_PRIVILEGED_DIRECTORY_LEASE_NOT_ACCEPTED'}
+      - name: Retain raw typed privileged Windows proof
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R347-${{ matrix.host }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/R347_*/R347_PINNED_DIRECTORY_LEASE.json
+            ${{ runner.temp }}/R347_*/OTHER_ADMIN_RENAME_RECEIPT.json
+          retention-days: 7
+          if-no-files-found: warn

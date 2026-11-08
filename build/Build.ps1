@@ -92,12 +92,12 @@ $CanonicalTextResources=[ordered]@{
     'TaskbarMonitorSensorSupervisor.cs'=(Join-Path $Root 'src\sensors\TaskbarMonitorSensorSupervisor.cs')
     'TBME_Setup_Elevated_Helper.ps1'=(Join-Path $Root 'installer\TBME_Setup_Elevated_Helper.ps1')
     'LICENSE'=(Join-Path $Root 'LICENSE')
-    'README.md'=(Join-Path $Root 'docs\releases\v1.7.2\INSTALLER_README.txt')
+    'README.md'=(Join-Path $Root 'docs\releases\v1.7.8\INSTALLER_README.txt')
     'AUTHORS.md'=(Join-Path $Root 'AUTHORS.md')
     'COPYRIGHT_AND_ATTRIBUTION.md'=(Join-Path $Root 'COPYRIGHT_AND_ATTRIBUTION.md')
     'AI_ASSISTED_DEVELOPMENT.md'=(Join-Path $Root 'AI_ASSISTED_DEVELOPMENT.md')
     'THIRD_PARTY_NOTICES.md'=(Join-Path $Root 'THIRD_PARTY_NOTICES.md')
-    'RELEASE_NOTES_v1.7.2.md'=(Join-Path $Root 'docs\releases\v1.7.2\RELEASE_NOTES.md')
+    'RELEASE_NOTES_v1.7.8.md'=(Join-Path $Root 'docs\releases\v1.7.8\RELEASE_NOTES.md')
     'UPSTREAM_REFERENCE_GPL_NOTICE.md'=(Join-Path $Root 'UPSTREAM_REFERENCE_GPL_NOTICE.md')
     'TaskbarMonitorEnhanced_Setup.cs'=(Join-Path $Root 'installer\TaskbarMonitorEnhanced_Setup.cs')
 }
@@ -107,7 +107,7 @@ foreach($entry in $CanonicalTextResources.GetEnumerator()){
 Write-Host 'TBME_CANONICAL_TEXT_PAYLOAD=PASS'
 
 Build (Join-Path $PSScriptRoot 'TaskbarMonitorEnhanced_Setup.csproj')
-$Setup=Join-Path $Out 'Setup\TaskbarMonitorEnhanced_Setup_1.7.2.exe'
+$Setup=Join-Path $Out 'Setup\TaskbarMonitorEnhanced_Setup_1.7.8.exe'
 if(!(Test-Path -LiteralPath $Setup)){throw 'Setup output missing.'}
 
 # SignPath Foundation requires uniform signed-artifact project and ProductVersion metadata.
@@ -152,8 +152,8 @@ if([string]$v.Status -ne 'PASS' -or [int]$v.Resources -ne 25 -or $v.PawnIOBundle
 if($LASTEXITCODE -ne 0){throw 'Application contract suite failed.'}
 
 $manifest=[ordered]@{
-    Version='1.7.2'
-    Build='V1_7_2_R155_TASKBAR_FIX'
+    Version='1.7.8'
+    Build='V1_7_8_R286_OPTIONAL_TEMP_SOUND'
     GeneratedUtc=[datetime]::UtcNow.ToString('o')
     Dependencies=[ordered]@{
         LibreHardwareMonitor=[ordered]@{Version=[string]$Lock.dependencies.LibreHardwareMonitor.version;Url=$LhmUrl;SHA256=$LhmSha}

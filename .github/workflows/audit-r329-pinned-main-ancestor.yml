@@ -1,0 +1,90 @@
+name: R329 SHA-pinned Main ancestor rename native A/B
+
+on:
+  push:
+    branches: [audit/r329-main-ancestor-native-temp]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-main-ancestor:
+    name: Pinned Main ancestor rename negative on Windows ${{ matrix.host }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: A
+            os: windows-2025
+          - host: B
+            os: windows-2022
+    steps:
+      - name: Checkout exact review-only source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Verify isolated host and exact commit
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or
+             $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or
+             $env:COMPUTERNAME -match 'EMAD-PC' -or
+             (git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA){
+             throw 'R329_REFUSE_NON_DISPOSABLE_OR_UNPINNED_SOURCE'
+          }
+          'R329_DISPOSABLE_SOURCE_PRECONDITION=PASS'
+      - name: Set up pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.400
+      - name: Build private reproducible candidate on guest (no owner installation)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Build.ps1
+          if($LASTEXITCODE -ne 0){throw 'R329_HOSTED_PRIVATE_BUILD_FAILED'}
+          if(!(Test-Path 'build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe')){
+              throw 'R329_EXPECTED_PRIVATE_PE_NOT_BUILT'
+          }
+          'R329_PRIVATE_NOT_FOR_RELEASE_BUILD=PASS'
+      - name: Prove exact pinned Main blocks cross-process and ancestor rename
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $test=(Resolve-Path build/Test-R329-PinnedMainAncestorRename-Native.ps1).Path
+          $tok=$null;$errors=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($test,[ref]$tok,[ref]$errors)
+          if(@($errors).Count){throw 'R329_NATIVE_PS51_SCRIPT_PARSER_INVALID'}
+          $setup=(Resolve-Path build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe).Path
+          $win=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          & $win -NoProfile -NonInteractive -File $test -SetupPath $setup -HostLabel '${{ matrix.host }}'
+          if($LASTEXITCODE -ne 0){throw ('R329_SCOPED_NATIVE_TEST_FAILED_EXIT_'+$LASTEXITCODE)}
+          $receipt=Join-Path $env:RUNNER_TEMP ('R329_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R329_PINNED_MAIN_ANCESTOR_RENAME_RECEIPT.json')
+          if(!(Test-Path -LiteralPath $receipt -PathType Leaf)){throw 'R329_HOSTED_RAW_RECEIPT_NOT_CREATED'}
+          $r=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R329' -or
+             $r.Host -cne '${{ matrix.host }}' -or $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.Status -cne 'PASS_PRODUCTION_PINNED_MAIN_PREVENTS_SAME_AND_CROSS_PROCESS_RENAME' -or
+             @($r.Checks).Count -ne 19 -or $r.ActualUACInvoked -ne $false -or
+             $r.MainExecutableWasLaunched -ne $false -or
+             $r.OriginalOwnerHostTouched -ne $false -or
+             $r.ProtectedProgramFilesChanged -ne $false -or $r.SecurityFinalAccepted -ne $false -or
+             $r.SetupSHA256 -cne (Get-FileHash $setup -Algorithm SHA256).Hash -or
+             $r.MainSHA256 -cne (Get-FileHash 'build/_out/App/TaskbarMonitorEnhanced.exe' -Algorithm SHA256).Hash){
+              throw 'R329_HOSTED_RECEIPT_IDENTITY_AND_SCOPE_FAILED'
+          }
+          'R329_MAIN_PINNED_ACROSS_PARENT_RENAME_HOSTED=19/19_NO_UAC'
+      - name: Store bounded SHA-verifiable guest receipt only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R329-ancestor-guest-${{ matrix.host }}-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 21
+          path: |
+            ${{ runner.temp }}/R329_${{ matrix.host }}_${{ github.run_id }}/R329_PINNED_MAIN_ANCESTOR_RENAME_RECEIPT.json

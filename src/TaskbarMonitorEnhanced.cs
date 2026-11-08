@@ -33,18 +33,18 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("Live system monitor integrated into the Windows taskbar")]
 [assembly: AssemblyProduct("Taskbar Monitor Enhanced")]
 [assembly: AssemblyCompany("Dr. Ali-Akbar Emadeddin")]
-[assembly: AssemblyInformationalVersion("1.7.2+r155")]
+[assembly: AssemblyInformationalVersion("1.7.8+r286")]
 [assembly: AssemblyCopyright("Copyright © 2026 Dr. Ali-Akbar Emadeddin")]
-[assembly: AssemblyVersion("1.7.2.0")]
-[assembly: AssemblyFileVersion("1.7.2.0")]
+[assembly: AssemblyVersion("1.7.8.0")]
+[assembly: AssemblyFileVersion("1.7.8.0")]
 
 namespace TaskbarMonitorEnhanced
 {
     internal static class BuildInfo
     {
-        public const string Version = "V1_7_2_R155_TASKBAR_FIX";
+        public const string Version = "V1_7_8_R286_OPTIONAL_TEMP_SOUND";
         public const string Product = "Taskbar Monitor Enhanced";
-        public const string PublicVersion = "1.7.2";
+        public const string PublicVersion = "1.7.8";
         public const string ShortcutName = "Taskbar Monitor Enhanced";
         public const string ProductDescription = "Live system monitor integrated into the Windows taskbar";
         public const string Author = "Dr. Ali-Akbar Emadeddin";
@@ -414,6 +414,8 @@ namespace TaskbarMonitorEnhanced
         public bool AutoCheckUpdates { get; set; }
         public bool EnableTemperatureAlerts { get; set; }
         public bool EnableTemperatureNotifications { get; set; }
+        // Explicitly opt in to the current user's Windows warning sound.
+        public bool EnableTemperatureWarningSound { get; set; }
         public int CpuTempWarningC { get; set; }
         public int GpuTempWarningC { get; set; }
         public int DiskTempWarningC { get; set; }
@@ -457,7 +459,7 @@ namespace TaskbarMonitorEnhanced
             MemoryUnit = "Auto"; StorageUnit = "Auto"; NetworkUnit = "Auto"; DiskRateUnit = "Auto";
             ShowRamNumeric = true; ShowDiskNumeric = true;
             EnableHardwareFlyout = true; HoverShowAllDevices = true; AutoCheckUpdates = true;
-            EnableTemperatureAlerts = true; EnableTemperatureNotifications = false; CpuTempWarningC = 85; GpuTempWarningC = 85; DiskTempWarningC = 60;
+            EnableTemperatureAlerts = true; EnableTemperatureNotifications = false; EnableTemperatureWarningSound = false; CpuTempWarningC = 85; GpuTempWarningC = 85; DiskTempWarningC = 60;
             AdaptiveBatteryMode = true; BatteryUpdateIntervalMs = 3000; SparklineHistoryLength = 120;
             FollowWindowsTheme=false;WindowsLightTheme="Nordic Light";WindowsDarkTheme="Dark Minimal Pro";TaskbarDisplay="Primary";
             InitializeWorkspaceDefaults();
@@ -1002,6 +1004,14 @@ namespace TaskbarMonitorEnhanced
         public static bool IsDiskHot(bool available,float value,AppConfig c)
         { return c!=null&&c.EnableTemperatureAlerts&&available&&value>=c.DiskTempWarningC; }
         public static Color AlertColor { get { return Color.FromArgb(255,82,82); } }
+    }
+
+    internal static class TemperatureWarningSoundPolicy
+    {
+        // Do not play for a silent notification preference or unavailable UI.
+        // The caller already enforces snooze/quiet hours and hysteresis.
+        public static bool ShouldPlay(AppConfig config)
+        {return config!=null&&config.EnableTemperatureNotifications&&config.EnableTemperatureWarningSound;}
     }
 
     internal sealed class TemperatureNotificationState
@@ -3477,6 +3487,11 @@ namespace TaskbarMonitorEnhanced
                     Native.RECT wr;
                     if(!Native.GetWindowRect(h,out wr))return true;
                     Rectangle r=wr.ToRectangle();
+                    // R190: reject irrelevant window geometry before expensive
+                    // per-HWND .NET process table/name queries.
+                    if(r.Width<300 || r.Height<250)return true;
+                    if(r.Width>=screen.Width-20 && r.Height>=screen.Height-20)return true;
+                    if(r.Bottom < screen.Top + screen.Height/2)return true;
 
                     uint pid=0;
                     Native.GetWindowThreadProcessId(h,out pid);
@@ -3491,9 +3506,6 @@ namespace TaskbarMonitorEnhanced
                         String.Equals(pn,"SearchApp",StringComparison.OrdinalIgnoreCase);
 
                     if(!realStartHost)return true;
-                    if(r.Width<300 || r.Height<250)return true;
-                    if(r.Width>=screen.Width-20 && r.Height>=screen.Height-20)return true;
-                    if(r.Bottom < screen.Top + screen.Height/2)return true;
 
                     StringBuilder sb=new StringBuilder(256);
                     Native.GetClassName(h,sb,sb.Capacity);
@@ -4656,6 +4668,18 @@ namespace TaskbarMonitorEnhanced
             RecordAlert(lane+" temperature",body);
             try{trayIcon.ShowBalloonTip(10000,"Taskbar Monitor Enhanced - temperature warning",body,ToolTipIcon.Warning);Log.Write("WARN","TEMPERATURE_NOTIFICATION lane="+lane+" valueC="+value.ToString("0.0",CultureInfo.InvariantCulture)+" thresholdC="+threshold.ToString("0",CultureInfo.InvariantCulture));}
             catch(Exception ex){Log.Write("WARN","TEMPERATURE_NOTIFICATION_FAIL lane="+lane+" "+ex.Message);}
+            if(TemperatureWarningSoundPolicy.ShouldPlay(config))
+            {
+                try
+                {
+                    // Rate-limited by ShouldNotify above, follows user's Windows
+                    // selected Exclamation sound scheme and output volume.
+                    System.Media.SystemSounds.Exclamation.Play();
+                    Log.Write("INFO","TEMPERATURE_WARNING_SOUND_REQUESTED lane="+lane);
+                }
+                catch(Exception ex)
+                {Log.Write("WARN","TEMPERATURE_WARNING_SOUND_FAIL lane="+lane+" "+ex.GetType().Name);}
+            }
         }
 
         private void ReadMetrics()
@@ -6288,6 +6312,19 @@ namespace TaskbarMonitorEnhanced
             {
                 using(Pen hotPen=new Pen(Color.FromArgb(235,AlertPolicy.AlertColor),2f))
                     g.DrawRectangle(hotPen,inner.X,inner.Y,Math.Max(1,inner.Width-1),Math.Max(1,inner.Height-1));
+                // Preserve a semantic warning mask for Glass mode: recolor ONLY
+                // hot metric glyphs/charts, never normal theme ink or the backdrop.
+                if(glassThermalWarningCanvas!=null)
+                {
+                    using(SolidBrush maskBrush=new SolidBrush(Color.White))
+                        glassThermalWarningCanvas.FillRectangle(maskBrush,inner);
+                    if(glassInkCanvas!=null)
+                        using(Pen rim=new Pen(Color.White,2f))
+                            glassInkCanvas.DrawRectangle(rim,inner.X,inner.Y,Math.Max(1,inner.Width-1),Math.Max(1,inner.Height-1));
+                    if(glassHaloCanvas!=null)
+                        using(Pen haloRim=new Pen(Color.White,4f))
+                            glassHaloCanvas.DrawRectangle(haloRim,inner.X,inner.Y,Math.Max(1,inner.Width-1),Math.Max(1,inner.Height-1));
+                }
             }
             if(t.Mode=="round"||t.Mode=="glass")
             {
@@ -7070,11 +7107,17 @@ namespace TaskbarMonitorEnhanced
                 AppConfig c=new AppConfig();c.Normalize();
                 if(c.ConfigSchemaVersion<6)throw new InvalidOperationException("config schema");
                 if(c.FollowWindowsTheme||c.WindowsLightTheme!="Nordic Light"||c.WindowsDarkTheme!="Dark Minimal Pro"||c.TaskbarDisplay!="Primary")throw new InvalidOperationException("Windows integration defaults");
-                if(!c.EnableTemperatureAlerts||c.EnableTemperatureNotifications||c.CpuTempWarningC!=85||c.GpuTempWarningC!=85||c.DiskTempWarningC!=60)
+                if(!c.EnableTemperatureAlerts||c.EnableTemperatureNotifications||c.EnableTemperatureWarningSound||c.CpuTempWarningC!=85||c.GpuTempWarningC!=85||c.DiskTempWarningC!=60)
                     throw new InvalidOperationException("temperature alert defaults");
                 if(!AlertPolicy.IsCpuHot(true,85,c)||AlertPolicy.IsCpuHot(true,84.9f,c))throw new InvalidOperationException("CPU alert boundary");
                 if(!AlertPolicy.IsGpuHot(true,90,c)||AlertPolicy.IsGpuHot(false,100,c))throw new InvalidOperationException("GPU alert boundary");
                 if(!AlertPolicy.IsDiskHot(true,60,c)||AlertPolicy.IsDiskHot(true,59.9f,c))throw new InvalidOperationException("disk alert boundary");
+                if(TemperatureWarningSoundPolicy.ShouldPlay(c))throw new InvalidOperationException("audio off by default");
+                c.EnableTemperatureNotifications=true;c.EnableTemperatureWarningSound=true;
+                if(!TemperatureWarningSoundPolicy.ShouldPlay(c))throw new InvalidOperationException("audio explicit opt-in");
+                c.EnableTemperatureNotifications=false;
+                if(TemperatureWarningSoundPolicy.ShouldPlay(c))throw new InvalidOperationException("audio muted when toast disabled");
+                c.EnableTemperatureWarningSound=false;
                 TemperatureNotificationState notificationState=new TemperatureNotificationState();
                 DateTime nt=new DateTime(2026,10,2,12,0,0,DateTimeKind.Utc);
                 if(!notificationState.ShouldNotify("CPU",true,85,85,nt))throw new InvalidOperationException("notification first crossing");
@@ -7165,8 +7208,9 @@ namespace TaskbarMonitorEnhanced
         private ComboBox theme,windowsLightTheme,windowsDarkTheme,position,taskbarDisplay,cpuMode,gpuMode,diskMode,netMode,multiLayout,memoryUnit,storageUnit,networkUnit,diskRateUnit;
         private NumericUpDown opacity,interval,width,cpuWarn,gpuWarn,diskWarn,batteryInterval,historyLength;
         private GlassToggleSwitch glassModeToggle;
+        private Label glassModeState;
         private int lastOpacityPercent;
-        private CheckBox cpu,ram,disk,gpu,vram,net,temp,spark,startup,safe,floatAboveStart,ramNumeric,diskNumeric,flyout,hoverAll,autoCheckUpdates,tempAlerts,tempNotifications,adaptiveBattery,followWindowsTheme;
+        private CheckBox cpu,ram,disk,gpu,vram,net,temp,spark,startup,safe,floatAboveStart,ramNumeric,diskNumeric,flyout,hoverAll,autoCheckUpdates,tempAlerts,tempNotifications,tempSound,adaptiveBattery,followWindowsTheme;
         private CheckedListBox cpuList,gpuList,diskList,netList;
         private Label updateCurrent,updateLatest,updateStatus;
         private Button checkUpdate,installUpdate,openRelease;
@@ -7248,7 +7292,7 @@ namespace TaskbarMonitorEnhanced
             TabPage display=new TabPage("Display"), metrics=new TabPage("Metrics"), alerts=new TabPage("Alerts"), hardware=new TabPage("Hardware"), units=new TabPage("Units"), behavior=new TabPage("Behavior"), updates=new TabPage("Updates"), diagnostics=new TabPage("Diagnostics"), advanced=new TabPage("Advanced");
             tabs.TabPages.Add(display);tabs.TabPages.Add(metrics);tabs.TabPages.Add(alerts);tabs.TabPages.Add(hardware);tabs.TabPages.Add(units);tabs.TabPages.Add(behavior);tabs.TabPages.Add(updates);tabs.TabPages.Add(diagnostics);tabs.TabPages.Add(advanced);
             foreach(TabPage page in tabs.TabPages){page.AutoScroll=true;page.Padding=new Padding(10);page.BackColor=SettingsWindow;page.ForeColor=SettingsText;}
-            display.AutoScrollMinSize=new Size(760,440);metrics.AutoScrollMinSize=new Size(760,430);alerts.AutoScrollMinSize=new Size(760,430);hardware.AutoScrollMinSize=new Size(760,760);units.AutoScrollMinSize=new Size(760,540);behavior.AutoScrollMinSize=new Size(760,590);updates.AutoScrollMinSize=new Size(760,540);diagnostics.AutoScrollMinSize=new Size(840,700);advanced.AutoScrollMinSize=new Size(760,540);
+            display.AutoScrollMinSize=new Size(760,440);metrics.AutoScrollMinSize=new Size(760,430);alerts.AutoScrollMinSize=new Size(760,520);hardware.AutoScrollMinSize=new Size(760,760);units.AutoScrollMinSize=new Size(760,540);behavior.AutoScrollMinSize=new Size(760,590);updates.AutoScrollMinSize=new Size(760,540);diagnostics.AutoScrollMinSize=new Size(840,700);advanced.AutoScrollMinSize=new Size(760,540);
 
             theme=Combo(display,"Theme",ThemeCatalog.Names,c.Theme,22);position=Combo(display,"Position",new string[]{"Left","Center","Right"},c.Position,68);
             taskbarDisplay=Combo(display,"Taskbar monitor",TaskbarTargetPolicy.SettingChoices(c.TaskbarDisplay),c.TaskbarDisplay,114);
@@ -7256,9 +7300,16 @@ namespace TaskbarMonitorEnhanced
             Label glassLabel=new Label{Text="Glass mode",Location=new Point(24,164),Size=new Size(145,26)};
             display.Controls.Add(glassLabel);
             glassModeToggle=new GlassToggleSwitch{Location=new Point(180,158),
-                Size=new Size(112,34),Checked=c.GlassMode};
+                Size=new Size(68,34),Checked=c.GlassMode};
             SetA11y(glassModeToggle,"Glass mode switch","Click or press Space to switch Glass on or off. On: zero background; Off: your saved 1-100% opacity.");
             display.Controls.Add(glassModeToggle);
+            // A separate, opaque status label eliminates mixed native CheckBox text
+            // painting and keeps track, thumb and ON/OFF text spatially independent.
+            glassModeState=new Label{Text=c.GlassMode?"On":"Off",Location=new Point(260,160),
+                Size=new Size(72,30),AutoSize=false,TextAlign=ContentAlignment.MiddleLeft,
+                ForeColor=SettingsText,BackColor=SettingsSurface};
+            SetA11y(glassModeState,"Glass mode status","Current Glass mode state.");
+            display.Controls.Add(glassModeState);
             lastOpacityPercent=Math.Max(1,Math.Min(100,(int)Math.Round(c.OpacityWhenGlassOff*100)));
             opacity=Number(display,"Background opacity %",c.GlassMode?0:(decimal)(c.Opacity*100),c.GlassMode?0:1,100,216);
             opacity.Enabled=!c.GlassMode;
@@ -7274,10 +7325,25 @@ namespace TaskbarMonitorEnhanced
 
             tempAlerts=Check(alerts,"Enable temperature warning highlights",c.EnableTemperatureAlerts,24);
             tempNotifications=Check(alerts,"Show Windows notification when a threshold is crossed",c.EnableTemperatureNotifications,55);
-            cpuWarn=Number(alerts,"CPU warning °C",c.CpuTempWarningC,50,110,102);
-            gpuWarn=Number(alerts,"GPU warning °C",c.GpuTempWarningC,50,110,152);
-            diskWarn=Number(alerts,"Disk warning °C",c.DiskTempWarningC,40,90,202);
-            Label alertNote=new Label();alertNote.Location=new Point(24,258);alertNote.Size=new Size(690,120);alertNote.Text="Selected CPU, GPU or disk temperatures can switch the metric card to a high-visibility warning accent. Optional Windows notifications fire only on a new hot transition, use a 3 C recovery hysteresis and a 10-minute per-lane cooldown. Unsupported or stale temperature data never creates a false hot state.";alerts.Controls.Add(alertNote);
+            tempSound=Check(alerts,"Play Windows warning sound on a new hot threshold",c.EnableTemperatureWarningSound,86);
+            cpuWarn=Number(alerts,"CPU warning °C",c.CpuTempWarningC,50,110,135);
+            gpuWarn=Number(alerts,"GPU warning °C",c.GpuTempWarningC,50,110,185);
+            diskWarn=Number(alerts,"Disk warning °C",c.DiskTempWarningC,40,90,235);
+            Label alertNote=new Label();alertNote.Location=new Point(24,284);alertNote.Size=new Size(690,120);alertNote.Text="Selected CPU, GPU or disk temperatures can switch the metric card to a high-visibility warning accent. Optional Windows notifications fire only on a new hot transition, use a 3 C recovery hysteresis and a 10-minute per-lane cooldown. Unsupported or stale temperature data never creates a false hot state. Sound is opt-in and follows your Windows sound scheme.";alerts.Controls.Add(alertNote);
+            Button testWarningSound=new Button{Text="Test warning sound",Location=new Point(24,420),
+                Size=new Size(200,36),AutoSize=false};
+            SetA11y(testWarningSound,"Test temperature warning sound",
+                "Play one Windows Exclamation sound without heating the CPU or changing alarm thresholds.");
+            testWarningSound.Click+=delegate
+            {
+                try
+                {
+                    System.Media.SystemSounds.Exclamation.Play();
+                    Log.Write("INFO","TEMPERATURE_WARNING_SOUND_TEST_REQUESTED");
+                }
+                catch(Exception ex){Log.Write("WARN","TEMPERATURE_WARNING_SOUND_TEST_FAILED "+ex.GetType().Name);}
+            };
+            alerts.Controls.Add(testWarningSound);
 
             hardware.AutoScroll=true;hardware.AutoScrollMargin=new Size(0,24);int y=16;
             AddHardwareSection(hardware,"CPU",c.CpuDisplayMode,ChoicesCpu(),c.SelectedCpuIds,y,out cpuMode,out cpuList);y+=118;
@@ -7333,7 +7399,9 @@ namespace TaskbarMonitorEnhanced
             ModernizeSettingsPage(diagnostics,"Diagnostics","Inspect live health, copy reports and export support evidence.");
             ModernizeSettingsPage(advanced,"Advanced","Maintenance, logs and safe configuration reset.");
 
-            themePreview=new ThemePreviewControl(themePreviewRenderer);themePreview.Location=new Point(24,500);themePreview.Size=new Size(650,132);themePreview.Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right;display.AutoScrollMinSize=new Size(760,680);display.Controls.Add(themePreview);themePreview.BringToFront();
+            // The note extends to y=508 after the page modernization shift.
+            // The former preview at y=500 overlapped it by 8px; leave a 28px gap.
+            themePreview=new ThemePreviewControl(themePreviewRenderer);themePreview.Location=new Point(24,536);themePreview.Size=new Size(650,132);themePreview.Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right;display.AutoScrollMinSize=new Size(760,720);display.Controls.Add(themePreview);themePreview.BringToFront();
             theme.SelectedIndexChanged+=delegate{UpdateThemeModeUi();};windowsLightTheme.SelectedIndexChanged+=delegate{UpdateThemeModeUi();};windowsDarkTheme.SelectedIndexChanged+=delegate{UpdateThemeModeUi();};followWindowsTheme.CheckedChanged+=delegate{UpdateThemeModeUi();};UpdateThemeModeUi();
             EnsureAccessibilityMetadata(this);
 
@@ -7410,6 +7478,12 @@ namespace TaskbarMonitorEnhanced
             else if(control is NumericUpDown)
             {
                 NumericUpDown n=(NumericUpDown)control;n.BackColor=SettingsSurface2;n.ForeColor=SettingsText;n.BorderStyle=BorderStyle.FixedSingle;foreach(Control child in n.Controls){child.BackColor=SettingsSurface2;child.ForeColor=SettingsText;}
+            }
+            else if(control is GlassToggleSwitch)
+            {
+                // Native Flat CheckBox paint is never allowed over custom track ink.
+                GlassToggleSwitch x=(GlassToggleSwitch)control;
+                x.FlatStyle=FlatStyle.Standard;x.ForeColor=SettingsText;x.BackColor=SettingsSurface;
             }
             else if(control is CheckBox)
             {
@@ -7522,6 +7596,7 @@ namespace TaskbarMonitorEnhanced
         private void SyncGlassOpacityUi()
         {
             if(glassModeToggle==null || opacity==null)return;
+            if(glassModeState!=null)glassModeState.Text=glassModeToggle.Checked?"On":"Off";
             if(glassModeToggle.Checked)
             {
                 if(opacity.Enabled && opacity.Value>0)lastOpacityPercent=(int)opacity.Value;
@@ -7796,7 +7871,7 @@ namespace TaskbarMonitorEnhanced
                 memoryUnit.SelectedItem=d.MemoryUnit;storageUnit.SelectedItem=d.StorageUnit;diskRateUnit.SelectedItem=d.DiskRateUnit;networkUnit.SelectedItem=d.NetworkUnit;
                 ramNumeric.Checked=d.ShowRamNumeric;diskNumeric.Checked=d.ShowDiskNumeric;flyout.Checked=d.EnableHardwareFlyout;hoverAll.Checked=d.HoverShowAllDevices;
                 interval.Value=d.UpdateIntervalMs;startup.Checked=d.StartWithWindows;safe.Checked=d.SafePlacement;floatAboveStart.Checked=d.FloatAboveStartMenu;autoCheckUpdates.Checked=d.AutoCheckUpdates;
-                tempAlerts.Checked=d.EnableTemperatureAlerts;tempNotifications.Checked=d.EnableTemperatureNotifications;cpuWarn.Value=d.CpuTempWarningC;gpuWarn.Value=d.GpuTempWarningC;diskWarn.Value=d.DiskTempWarningC;
+                tempAlerts.Checked=d.EnableTemperatureAlerts;tempNotifications.Checked=d.EnableTemperatureNotifications;tempSound.Checked=d.EnableTemperatureWarningSound;cpuWarn.Value=d.CpuTempWarningC;gpuWarn.Value=d.GpuTempWarningC;diskWarn.Value=d.DiskTempWarningC;
                 adaptiveBattery.Checked=d.AdaptiveBatteryMode;batteryInterval.Value=d.BatteryUpdateIntervalMs;historyLength.Value=d.SparklineHistoryLength;followWindowsTheme.Checked=d.FollowWindowsTheme;windowsLightTheme.SelectedItem=d.WindowsLightTheme;windowsDarkTheme.SelectedItem=d.WindowsDarkTheme;taskbarDisplay.SelectedItem=d.TaskbarDisplay;
                 CheckAll(cpuList);CheckAll(gpuList);CheckAll(diskList);CheckAll(netList);
                 if(themePreview!=null)themePreview.ThemeName=d.Theme;
@@ -7869,7 +7944,7 @@ namespace TaskbarMonitorEnhanced
             c.Opacity=c.GlassMode?0.0:(double)opacity.Value/100.0;
             c.MinWidthLogicalPx=(int)width.Value;c.UpdateIntervalMs=(int)interval.Value;c.ShowCpu=cpu.Checked;c.ShowRam=ram.Checked;c.ShowDisk=disk.Checked;c.ShowGpu=gpu.Checked;c.ShowVram=vram.Checked;c.ShowNetwork=net.Checked;c.ShowTemperatures=temp.Checked;c.ShowSparklines=spark.Checked;c.StartWithWindows=startup.Checked;c.SafePlacement=safe.Checked;c.FloatAboveStartMenu=floatAboveStart.Checked;
             c.CpuDisplayMode=(string)cpuMode.SelectedItem;c.GpuDisplayMode=(string)gpuMode.SelectedItem;c.DiskDisplayMode=(string)diskMode.SelectedItem;c.NetworkDisplayMode=(string)netMode.SelectedItem;c.SelectedCpuIds=CheckedIds(cpuList);c.SelectedGpuIds=CheckedIds(gpuList);c.SelectedDiskIds=CheckedIds(diskList);c.SelectedNetworkIds=CheckedIds(netList);c.MultipleDeviceLayout=(string)multiLayout.SelectedItem;c.MemoryUnit=(string)memoryUnit.SelectedItem;c.StorageUnit=(string)storageUnit.SelectedItem;c.DiskRateUnit=(string)diskRateUnit.SelectedItem;c.NetworkUnit=(string)networkUnit.SelectedItem;c.ShowRamNumeric=ramNumeric.Checked;c.ShowDiskNumeric=diskNumeric.Checked;c.EnableHardwareFlyout=flyout.Checked;c.HoverShowAllDevices=hoverAll.Checked;c.AutoCheckUpdates=autoCheckUpdates.Checked;
-            c.EnableTemperatureAlerts=tempAlerts.Checked;c.EnableTemperatureNotifications=tempNotifications.Checked;c.CpuTempWarningC=(int)cpuWarn.Value;c.GpuTempWarningC=(int)gpuWarn.Value;c.DiskTempWarningC=(int)diskWarn.Value;c.AdaptiveBatteryMode=adaptiveBattery.Checked;c.BatteryUpdateIntervalMs=(int)batteryInterval.Value;c.SparklineHistoryLength=(int)historyLength.Value;c.FollowWindowsTheme=followWindowsTheme.Checked;c.WindowsLightTheme=Convert.ToString(windowsLightTheme.SelectedItem,CultureInfo.InvariantCulture);c.WindowsDarkTheme=Convert.ToString(windowsDarkTheme.SelectedItem,CultureInfo.InvariantCulture);c.TaskbarDisplay=TaskbarTargetPolicy.NormalizeConfigId(Convert.ToString(taskbarDisplay.SelectedItem,CultureInfo.InvariantCulture));
+            c.EnableTemperatureAlerts=tempAlerts.Checked;c.EnableTemperatureNotifications=tempNotifications.Checked;c.EnableTemperatureWarningSound=tempSound.Checked;c.CpuTempWarningC=(int)cpuWarn.Value;c.GpuTempWarningC=(int)gpuWarn.Value;c.DiskTempWarningC=(int)diskWarn.Value;c.AdaptiveBatteryMode=adaptiveBattery.Checked;c.BatteryUpdateIntervalMs=(int)batteryInterval.Value;c.SparklineHistoryLength=(int)historyLength.Value;c.FollowWindowsTheme=followWindowsTheme.Checked;c.WindowsLightTheme=Convert.ToString(windowsLightTheme.SelectedItem,CultureInfo.InvariantCulture);c.WindowsDarkTheme=Convert.ToString(windowsDarkTheme.SelectedItem,CultureInfo.InvariantCulture);c.TaskbarDisplay=TaskbarTargetPolicy.NormalizeConfigId(Convert.ToString(taskbarDisplay.SelectedItem,CultureInfo.InvariantCulture));
         }
     }
 
@@ -10218,6 +10293,7 @@ namespace TaskbarMonitorEnhanced
         {
             Native.EnableDllSearchHardening();
             if(args!=null && args.Length>1 && args[0]=="--glassproof")return TaskbarGlassProof.Run(args[1]);
+            if(args!=null && args.Length>1 && args[0]=="--glassthermalproof")return TaskbarGlassThermalProof.Run(args[1]);
             if(args!=null && args.Length>1 && args[0]=="--chartglassproof")return TaskbarChartGlassProof.Run(args[1]);
             if(args!=null && args.Length>1 && args[0]=="--glassliveproof")return TaskbarGlassLiveProof.Run(args[1]);
             if(args!=null && args.Length>1 && args[0]=="--topglassliveproof")return TaskbarTopGlassVisualProof.Run(args[1]);

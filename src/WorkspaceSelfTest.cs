@@ -126,7 +126,7 @@ namespace TaskbarMonitorEnhanced
         {
             try
             {
-                Check(BuildInfo.PublicVersion=="1.7.2","version");
+                Check(BuildInfo.PublicVersion=="1.7.8","version");
                 for(int schema=0;schema<7;schema++){
                     var legacy=new AppConfig{ConfigSchemaVersion=schema,EnableTemperatureNotifications=true,CpuTempWarningC=0,FontSize=Double.NaN,Opacity=Double.NaN};legacy.Normalize();
                     Check(legacy.ConfigSchemaVersion==8,"all legacy schemas migrate "+schema);

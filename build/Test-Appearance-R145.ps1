@@ -57,9 +57,19 @@ $bg=[Drawing.Color]::FromArgb(255,90,70,40)
 $full.SetPixel(0,0,$bg);$full.SetPixel(1,0,$bg)
 $ink.SetPixel(1,0,$fg);$halo.SetPixel(2,0,[Drawing.Color]::White)
 $compose=$pType.GetMethod('Compose',$stat)
+# Preserve the original 100-case contract while the semantic warning mask
+# extends the production compositor's internal signature from 7 to 8 args.
+$composeCount=@($compose.GetParameters()).Count
+if($composeCount -ne 7 -and $composeCount -ne 8){throw ('R145_UNEXPECTED_COMPOSITOR_SIGNATURE_'+$composeCount)}
+function Invoke-Compose([int]$pct,[bool]$glassMode){
+ $args=[object[]]@($full.PSObject.BaseObject,$ink.PSObject.BaseObject,
+   $halo.PSObject.BaseObject,$pct,[Drawing.Color]::White,$bg.PSObject.BaseObject,$glassMode)
+ if($composeCount -eq 8){$args+=@($null)}
+ return $compose.Invoke($null,$args)
+}
 try{
  foreach($pct in (1..100)){
-  $b=$compose.Invoke($null,[object[]]@($full.PSObject.BaseObject,$ink.PSObject.BaseObject,$halo.PSObject.BaseObject,$pct,[Drawing.Color]::White,$bg.PSObject.BaseObject,$false))
+  $b=Invoke-Compose $pct $false
   try{
    $back=$b.GetPixel(0,0);$glyph=$b.GetPixel(1,0);$ring=$b.GetPixel(2,0)
    if($back.A -ne [Math]::Round(255*$pct/100.0) -or $glyph.ToArgb() -ne $fg.ToArgb() -or $ring.A -ne 0){
@@ -68,9 +78,9 @@ try{
    if($pct -in @(1,10,29,30,31,100)){$readings+=@{Percent=$pct;BackgroundAlpha=$back.A;ForegroundArgb=$glyph.ToArgb();HaloAlpha=$ring.A}}
   }finally{$b.Dispose()}
  }
- $b=$compose.Invoke($null,[object[]]@($full.PSObject.BaseObject,$ink.PSObject.BaseObject,$halo.PSObject.BaseObject,17,[Drawing.Color]::White,$bg.PSObject.BaseObject,$true))
+ $b=Invoke-Compose 17 $true
  try{if($b.GetPixel(0,0).A -ne 0 -or $b.GetPixel(1,0).A -ne 255){throw 'R145_EXPLICIT_GLASS_ALPHA_NOT_ZERO'}}finally{$b.Dispose()}
- $b=$compose.Invoke($null,[object[]]@($full.PSObject.BaseObject,$ink.PSObject.BaseObject,$halo.PSObject.BaseObject,0,[Drawing.Color]::White,$bg.PSObject.BaseObject,$false))
+ $b=Invoke-Compose 0 $false
  try{if($b.GetPixel(0,0).A -le 0){throw 'R145_ZERO_NUMBER_IMPLICITLY_ENABLED_GLASS'}}finally{$b.Dispose()}
 }finally{$full.Dispose();$ink.Dispose();$halo.Dispose()}
 $result=[ordered]@{Revision='R145';Status='PASS_MODEL_REAL_CONTROL_AND_PIXEL_CONTRACT';MainSHA256=(Get-FileHash $MainPath -Algorithm SHA256).Hash;ModelOpacityCases=100;PixelOpacityCases=100;RealToggleClickCycles=8;ControlKind='CheckBox-derived pill with circular thumb';ZeroOnlyExplicitGlass=$true;OpacityOneMinimum=$true;PlainInkAndChartsKeepThemeColor=$true;Screenshots='Control-only rendering, NOT native taskbar acceptance';Readings=$readings;PersonalInstallationTouched=$false}

@@ -6,9 +6,9 @@ Set-StrictMode -Version Latest
 $Root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $LegacyDir=Join-Path $Root 'artifacts\_r85_forbidden_pawnio_fixture'
 $Project=Join-Path $PSScriptRoot 'TaskbarMonitorEnhanced_Setup.csproj'
-$OssSetup=Join-Path $Root 'build\_out\Setup\TaskbarMonitorEnhanced_Setup_1.7.2.exe'
+$OssSetup=Join-Path $Root 'build\_out\Setup\TaskbarMonitorEnhanced_Setup_1.7.8.exe'
 $Main=Join-Path $Root 'build\_out\App\TaskbarMonitorEnhanced.exe'
-$LegacySetup=Join-Path $LegacyDir 'TaskbarMonitorEnhanced_Setup_1.7.2.exe'
+$LegacySetup=Join-Path $LegacyDir 'TaskbarMonitorEnhanced_Setup_1.7.8.exe'
 $LegacyVerify=Join-Path $LegacyDir 'legacy_verify.json'
 $Reader=Join-Path $PSScriptRoot 'Verify-Embedded-Main.ps1'
 if(Test-Path -LiteralPath $LegacyDir){throw 'R85 UNSAFE RERUN: FORBIDDEN FIXTURE ALREADY EXISTS'}
@@ -56,7 +56,7 @@ try {
     Write-Output ('R85_OSS_NO_PROPRIETARY_BUNDLE_PASS productionEmbedded=False negativeLegacyResources='+$v.Resources+' negativeRejected=True')
 } finally {
     if($created -and (Test-Path -LiteralPath $LegacyDir)){
-        $allow=@('TaskbarMonitorEnhanced_Setup_1.7.2.exe','TaskbarMonitorEnhanced_Setup_1.7.2.exe.config','legacy_verify.json')
+        $allow=@('TaskbarMonitorEnhanced_Setup_1.7.8.exe','TaskbarMonitorEnhanced_Setup_1.7.8.exe.config','legacy_verify.json')
         $objects=@(Get-ChildItem -LiteralPath $LegacyDir -Force)
         if(@($objects | Where-Object {$_.PSIsContainer -or $_.Name -notin $allow}).Count -ne 0){
             throw ('R85 DEGRADED: UNKNOWN FILE IN OWNED STAGING; PRESERVED '+$LegacyDir)

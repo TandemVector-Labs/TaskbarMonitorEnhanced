@@ -44,7 +44,7 @@ if($null -ne $manifest) {
             'TaskbarMonitorEnhanced.exe.config'='build\_out\App\TaskbarMonitorEnhanced.exe.config';
             'TaskbarMonitorSensorBroker.exe'='build\_out\Broker\TaskbarMonitorSensorBroker.exe';
             'TaskbarMonitorSensorSupervisor.exe'='build\_out\Supervisor\TaskbarMonitorSensorSupervisor.exe';
-            'TaskbarMonitorEnhanced_Setup_1.7.2.exe'='build\_out\Setup\TaskbarMonitorEnhanced_Setup_1.7.2.exe'
+            'TaskbarMonitorEnhanced_Setup_1.7.8.exe'='build\_out\Setup\TaskbarMonitorEnhanced_Setup_1.7.8.exe'
         }
         $realHashesPass=$true
         foreach($item in $outputs){
@@ -168,7 +168,7 @@ Add-Gate 'G12_START_SEARCH_24_REAL_NATIVE_INK_AND_EXACT_RETURN' $startFloatPass 
 # R75: G02 hashes deterministic UNSIGNED builder outputs. G14 and G15 must use
 # separate SIGNED release staging, since Authenticode modifies executable SHA256.
 $signedMainExe=Join-Path $root 'artifacts\signed\Main\TaskbarMonitorEnhanced.exe'
-$signedSetupExe=Join-Path $root 'artifacts\signed\Setup\TaskbarMonitorEnhanced_Setup_1.7.2.exe'
+$signedSetupExe=Join-Path $root 'artifacts\signed\Setup\TaskbarMonitorEnhanced_Setup_1.7.8.exe'
 $expectedSignedMainDigest=''
 if((Test-Path -LiteralPath $signedMainExe -PathType Leaf) -and
    (Test-Path -LiteralPath $signedSetupExe -PathType Leaf)){
@@ -233,7 +233,7 @@ Add-Gate 'G14_INSTALLED_TASKBAR_EXPLORER_SENSORS_ROLLBACK' $installedPass $insta
 $setupExe=$signedSetupExe
 $mainExe=$signedMainExe
 # Keep original _out builder outputs immutable so G02 exact source checks remain reproducible.
-$unsignedSetupExe=Join-Path $root 'build\_out\Setup\TaskbarMonitorEnhanced_Setup_1.7.2.exe'
+$unsignedSetupExe=Join-Path $root 'build\_out\Setup\TaskbarMonitorEnhanced_Setup_1.7.8.exe'
 # R73: G15 must prove actual SignPath Foundation publisher, valid timestamps, matched
 # exact file/product versions AND live provider-origin/payload evidence. Never trust
 # self-declared "approved" JSON, a test certificate or token-less synthetic output.
@@ -253,10 +253,10 @@ if((Test-Path -LiteralPath $setupExe -PathType Leaf) -and (Test-Path -LiteralPat
     $sameCert=$null -ne $setupCert -and $null -ne $mainCert -and $setupCert.Thumbprint -ceq $mainCert.Thumbprint
     $exactMetadata=$setupInfo.ProductName -ceq 'Taskbar Monitor Enhanced' -and
         $mainInfo.ProductName -ceq 'Taskbar Monitor Enhanced' -and
-        $setupInfo.ProductVersion -ceq '1.7.2+r126' -and
-        $mainInfo.ProductVersion -ceq '1.7.2+r126' -and
-        $setupInfo.FileVersion -ceq '1.7.2.0' -and
-        $mainInfo.FileVersion -ceq '1.7.2.0'
+        $setupInfo.ProductVersion -ceq '1.7.8+r286' -and
+        $mainInfo.ProductVersion -ceq '1.7.8+r286' -and
+        $setupInfo.FileVersion -ceq '1.7.8.0' -and
+        $mainInfo.FileVersion -ceq '1.7.8.0'
     $cryptoPass=([string]$mainSig.Status -ceq 'Valid') -and
         ([string]$setupSig.Status -ceq 'Valid') -and
         $mainName -ceq 'SignPath Foundation' -and

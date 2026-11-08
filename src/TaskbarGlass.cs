@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using System.IO;
 using System.Web.Script.Serialization;
 // R41: per-pixel taskbar background translucency with independent, contrast-safe glyphs.
@@ -21,12 +21,12 @@ namespace TaskbarMonitorEnhanced
     {
         internal GlassToggleSwitch()
         {
-            AutoSize=false;Size=new Size(112,34);TabStop=true;Text="";
+            AutoSize=false;Size=new Size(68,34);TabStop=true;Text="";
             AccessibleRole=AccessibleRole.CheckButton;
             SetStyle(ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|
-                ControlStyles.OptimizedDoubleBuffer|ControlStyles.ResizeRedraw|
-                ControlStyles.SupportsTransparentBackColor,true);
-            BackColor=Color.Transparent;Cursor=Cursors.Hand;
+                ControlStyles.OptimizedDoubleBuffer|ControlStyles.ResizeRedraw,true);
+            // Never composite other WinForms/native text behind this owner-painted control.
+            BackColor=Color.FromArgb(20,28,38);Cursor=Cursors.Hand;
         }
         protected override void OnCheckedChanged(EventArgs e)
         {base.OnCheckedChanged(e);Invalidate();}
@@ -36,11 +36,16 @@ namespace TaskbarMonitorEnhanced
             {Checked=e.KeyCode==Keys.Right;e.Handled=true;e.SuppressKeyPress=true;return;}
             base.OnKeyDown(e);
         }
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            e.Graphics.Clear(BackColor);
+        }
         protected override void OnPaint(PaintEventArgs e)
         {
+            e.Graphics.Clear(BackColor);
             e.Graphics.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             float h=Math.Max(12,Math.Min(ClientSize.Height-6,26f*DeviceDpi/96f));
-            float w=h*1.9f,x=3,y=(ClientSize.Height-h)/2f;
+            float w=Math.Min(ClientSize.Width-8,h*1.9f),x=4,y=(ClientSize.Height-h)/2f;
             Color track=SystemInformation.HighContrast?
                 (Checked?SystemColors.Highlight:SystemColors.ControlDark):
                 (Checked?Color.FromArgb(41,128,227):Color.FromArgb(96,106,121));
@@ -54,9 +59,8 @@ namespace TaskbarMonitorEnhanced
             float inset=Math.Max(2,h/9),d=h-2*inset;
             using(var thumb=new SolidBrush(SystemInformation.HighContrast?SystemColors.HighlightText:Color.White))
                 e.Graphics.FillEllipse(thumb,right?x+w-inset-d:x+inset,y+inset,d,d);
-            TextRenderer.DrawText(e.Graphics,Checked?"On":"Off",Font,
-                new Rectangle((int)(x+w+8),0,Math.Max(1,ClientSize.Width-(int)(x+w+8)),ClientSize.Height),
-                Enabled?ForeColor:SystemColors.GrayText,TextFormatFlags.Left|TextFormatFlags.VerticalCenter);
+            // The ON/OFF word lives in an independent opaque Settings label, not
+            // on top of the switch's thumb or in an insufficient width at high DPI.
             if(Focused&&ShowFocusCues)ControlPaint.DrawFocusRectangle(e.Graphics,ClientRectangle);
         }
     }
@@ -178,30 +182,48 @@ namespace TaskbarMonitorEnhanced
             finally{b.UnlockBits(d);}
         }
         private static byte Byte(double x){return (byte)Math.Max(0,Math.Min(255,(int)Math.Round(x)));}
-        internal static Bitmap Compose(Bitmap full,Bitmap glyph,Bitmap halo,int opacityPercent,Color taskbar,Color themeBackground,bool glassMode)
+        // Semantic thermal warning color: preserve an unmistakable red tint even on
+        // light taskbars, while retaining a contrasting halo around its glyphs.
+        private static Color ThermalWarningInk(Color taskbarBackground)
+        {
+            Color[] candidates={
+                Color.FromArgb(255,82,82),Color.FromArgb(255,172,172),
+                Color.FromArgb(168,0,26),Color.FromArgb(37,0,8)};
+            foreach(Color c in candidates)
+                if(TaskbarGlassColor.Contrast(c,taskbarBackground)>=4.5)return c;
+            return candidates.OrderByDescending(c=>TaskbarGlassColor.Contrast(c,taskbarBackground)).First();
+        }        internal static Bitmap Compose(Bitmap full,Bitmap glyph,Bitmap halo,int opacityPercent,Color taskbar,Color themeBackground,bool glassMode,Bitmap thermalWarningMask=null)
         {
             if(full==null)throw new ArgumentNullException("full");
             if(glyph!=null&&(glyph.Width!=full.Width||glyph.Height!=full.Height))throw new ArgumentException("glyph geometry");
             if(halo!=null&&(halo.Width!=full.Width||halo.Height!=full.Height))throw new ArgumentException("halo geometry");
+            if(thermalWarningMask!=null&&(thermalWarningMask.Width!=full.Width||thermalWarningMask.Height!=full.Height))
+                throw new ArgumentException("thermal warning mask geometry");
             int pct=glassMode?0:Math.Max(1,Math.Min(100,opacityPercent));
             byte[] basePixels=ReadPixels(full,PixelFormat.Format32bppArgb);
             byte[] inkPixels=glyph==null?null:ReadPixels(glyph,PixelFormat.Format32bppPArgb);
             byte[] haloPixels=halo==null?null:ReadPixels(halo,PixelFormat.Format32bppPArgb);
+            byte[] warningPixels=glassMode&&thermalWarningMask!=null?
+                ReadPixels(thermalWarningMask,PixelFormat.Format32bppPArgb):null;
             byte[] pixels=new byte[basePixels.Length];
             bool adaptInk=glassMode; // R145: NEVER infer material or recolor ink from an opacity threshold.
-            Color chosen=TaskbarGlassColor.ReadableText(TaskbarGlassColor.EffectiveBackground(taskbar,themeBackground,pct/100d));
+            Color effectiveBackground=TaskbarGlassColor.EffectiveBackground(taskbar,themeBackground,pct/100d);
+            Color chosen=TaskbarGlassColor.ReadableText(effectiveBackground);
+            Color warningInk=warningPixels==null?Color.Empty:ThermalWarningInk(effectiveBackground);
             Color outline=chosen.ToArgb()==Color.White.ToArgb()?Color.Black:Color.White;
             double backgroundScale=pct/100d;
             for(int i=0;i<pixels.Length;i+=4)
             {
                 double ink=inkPixels==null?0:inkPixels[i+3]/255d;
+                bool thermalHot=warningPixels!=null&&warningPixels[i+3]>=128;
+                Color textInk=thermalHot?warningInk:chosen;
                 double ring=adaptInk&&haloPixels!=null?Math.Max(0,haloPixels[i+3]/255d-ink)*0.78:0;
                 ring=Math.Min(1-ink,ring);
                 double bg=(1-ink-ring)*backgroundScale*(basePixels[i+3]/255d);
                 pixels[i+3]=Byte((ink+ring+bg)*255);
                 for(int ch=0;ch<3;ch++)
                 {
-                    int textChannel=ch==0?chosen.B:ch==1?chosen.G:chosen.R;
+                    int textChannel=ch==0?textInk.B:ch==1?textInk.G:textInk.R;
                     int outlineChannel=ch==0?outline.B:ch==1?outline.G:outline.R;
                     double glyphContribution=adaptInk?textChannel*ink:(inkPixels==null?0:inkPixels[i+ch]);
                     pixels[i+ch]=Byte(glyphContribution+outlineChannel*ring+basePixels[i+ch]*bg);
@@ -363,7 +385,7 @@ namespace TaskbarMonitorEnhanced
             // the opaque last-resort fallback; never misreport successful refresh.
         }
 
-        private Graphics glassInkCanvas,glassHaloCanvas;
+        private Graphics glassInkCanvas,glassHaloCanvas,glassThermalWarningCanvas;
         private bool glassLegacyFallback;
         private bool glassLegacyFallbackReady;
         private DateTime taskbarGlassSampleAt=DateTime.MinValue;
@@ -408,6 +430,15 @@ namespace TaskbarMonitorEnhanced
         }
         // R44 chart proof seeds ONLY a purpose-built proof-mode renderer.
         // Real taskbar metrics/history are never synthesized or persisted.
+        // Isolated proof only: no telemetry process or user configuration is changed.
+        internal void SetCpuTemperatureForThermalProof(float temperatureC)
+        {
+            if(!proofMode||!MetricStatistics.Finite(temperatureC))
+                throw new InvalidOperationException("Thermal pixel stimulus is proof-only.");
+            snapshot.CpuDevices.Clear();
+            snapshot.CpuTempAvailable=true;
+            snapshot.CpuTempCurrent=temperatureC;
+        }
         internal void SeedChartHistoryForProof()
         {
             if(!proofMode)throw new InvalidOperationException("Synthetic chart fixture limited to proof mode.");
@@ -430,7 +461,7 @@ namespace TaskbarMonitorEnhanced
         {
             percent=glassMode?0:Math.Max(1,Math.Min(100,percent));
             width=Math.Max(1,width);height=Math.Max(1,height); // Preserve the exact native taskbar footprint, including compact 279px hosts.
-            Bitmap ink=null,halo=null,full=null;
+            Bitmap ink=null,halo=null,full=null,thermalMask=null;
             try
             {
                 if(percent<100)
@@ -447,10 +478,13 @@ namespace TaskbarMonitorEnhanced
                         glassHaloCanvas.TextRenderingHint=System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
                         glassHaloCanvas.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
                         glassHaloCanvas.Clear(Color.Transparent);
+                        thermalMask=new Bitmap(width,height,PixelFormat.Format32bppPArgb);
+                        glassThermalWarningCanvas=Graphics.FromImage(thermalMask);
+                        glassThermalWarningCanvas.Clear(Color.Transparent);
                     }
                 }
                 full=RenderThemeDefinition(theme,width,height);
-                Bitmap output=TaskbarGlassPixels.Compose(full,ink,halo,percent,taskbar,theme.Background,glassMode);
+                Bitmap output=TaskbarGlassPixels.Compose(full,ink,halo,percent,taskbar,theme.Background,glassMode,thermalMask);
                 if(diagnosticBeacon&&!proofMode)
                     using(Graphics beacon=Graphics.FromImage(output))PaintDiagnosticBeacon(beacon);
                 return output;
@@ -459,9 +493,11 @@ namespace TaskbarMonitorEnhanced
             {
                 if(glassInkCanvas!=null){glassInkCanvas.Dispose();glassInkCanvas=null;}
                 if(glassHaloCanvas!=null){glassHaloCanvas.Dispose();glassHaloCanvas=null;}
+                if(glassThermalWarningCanvas!=null){glassThermalWarningCanvas.Dispose();glassThermalWarningCanvas=null;}
                 if(full!=null)full.Dispose();
                 if(ink!=null)ink.Dispose();
                 if(halo!=null)halo.Dispose();
+                if(thermalMask!=null)thermalMask.Dispose();
             }
         }
         private bool PaintPerPixelLayer()
@@ -584,6 +620,99 @@ namespace TaskbarMonitorEnhanced
             {
                 Console.Error.WriteLine("TBME_GLASS_PROOF=FAIL "+ex);
                 return 41;
+            }
+        }
+    }
+    // Exercises the real theme/metric/native bitmap painter with synthetic CPU heat,
+    // but never creates a native host window or sends a user notification.
+    internal static class TaskbarGlassThermalProof
+    {
+        private static void Require(bool ok,string label)
+        {if(!ok)throw new InvalidOperationException("R272 thermal glass: "+label);}
+        private static int RedForeground(Bitmap bitmap)
+        {
+            byte[] pixels=TaskbarGlassPixels.ReadPixels(bitmap,PixelFormat.Format32bppPArgb);
+            int count=0;
+            for(int i=0;i<pixels.Length;i+=4)
+            {
+                int a=pixels[i+3],b=pixels[i],g=pixels[i+1],r=pixels[i+2];
+                if(a>=215&&r>g+22&&r>b+22&&r>=32)count++;
+            }
+            return count;
+        }
+        private static int ClearBackground(Bitmap bitmap)
+        {
+            byte[] pixels=TaskbarGlassPixels.ReadPixels(bitmap,PixelFormat.Format32bppPArgb);
+            int count=0;
+            for(int i=3;i<pixels.Length;i+=4)if(pixels[i]==0)count++;
+            return count;
+        }
+        internal static int Run(string directory)
+        {
+            try
+            {
+                if(Directory.Exists(directory))throw new InvalidOperationException("Proof output exists.");
+                Directory.CreateDirectory(directory);
+                AppConfig cfg=new AppConfig();
+                cfg.GlassMode=true;cfg.Opacity=0;cfg.EnableTemperatureAlerts=true;
+                cfg.CpuTempWarningC=85;cfg.ShowCpu=true;cfg.ShowTemperatures=true;
+                cfg.ShowRam=false;cfg.ShowGpu=false;cfg.ShowDisk=false;
+                cfg.ShowVram=false;cfg.ShowNetwork=false;cfg.ShowSparklines=true;
+                cfg.Normalize();
+                Require(AlertPolicy.IsCpuHot(true,95,cfg),"hot rule");
+                Require(!AlertPolicy.IsCpuHot(true,60,cfg),"cold rule");
+                Require(!AlertPolicy.IsCpuHot(false,100,cfg),"missing data rule");
+                int cases=0,hotMin=int.MaxValue,nonhotMax=0,clearMin=int.MaxValue;
+                using(OverlayForm form=new OverlayForm(cfg,true))
+                {
+                    foreach(string theme in ThemeCatalog.Names)
+                    foreach(Color taskbar in new[]{Color.FromArgb(18,20,24),Color.FromArgb(235,238,241)})
+                    {
+                        form.SetCpuTemperatureForThermalProof(60);
+                        using(Bitmap cold=form.RenderAppearanceForProof(theme,620,48,0,taskbar,true))
+                        {
+                            int coldRed=RedForeground(cold);
+                            Require(coldRed==0,"cold accent red "+theme+" "+taskbar);
+                            nonhotMax=Math.Max(nonhotMax,coldRed);
+                        }
+                        form.SetCpuTemperatureForThermalProof(95);
+                        using(Bitmap hot=form.RenderAppearanceForProof(theme,620,48,0,taskbar,true))
+                        {
+                            int hotRed=RedForeground(hot);
+                            int clear=ClearBackground(hot);
+                            Require(hotRed>=40,"missing hot red ink "+theme+" "+taskbar+" pixels="+hotRed);
+                            Require(clear>620*48/4,"hot alert made Glass backdrop opaque "+theme);
+                            hotMin=Math.Min(hotMin,hotRed);
+                            clearMin=Math.Min(clearMin,clear);
+                        }
+                        cases++;
+                    }
+                    Require(cases==ThemeCatalog.Names.Length*2,"theme and taskbar background coverage");
+                    cfg.EnableTemperatureAlerts=false;
+                    using(Bitmap off=form.RenderAppearanceForProof("Retro Terminal",620,48,0,Color.FromArgb(18,20,24),true))
+                        Require(RedForeground(off)==0,"disabled alert should not tint");
+                    cfg.EnableTemperatureAlerts=true;
+                    form.SetCpuTemperatureForThermalProof(95);
+                    using(Bitmap normalOpacity=form.RenderAppearanceForProof("Retro Terminal",620,48,29,Color.FromArgb(18,20,24),false))
+                    {
+                        Require(normalOpacity.Width==620&&normalOpacity.Height==48,"ordinary opacity mode geometry");
+                    }
+                }
+                var result=new{Revision="R272",Status="PASS",Source="REAL_OVERLAY_THEME_AND_METRIC_PAINTER",
+                    HotC=95,ColdC=60,ThresholdC=85,Themes=ThemeCatalog.Names.Length,
+                    ThemeBackgroundPairs=cases,HotRedPixelsMinimum=hotMin,ColdRedPixelsMaximum=nonhotMax,
+                    ClearBackgroundPixelsMinimum=clearMin,OptOutTested=true,NoNativeHostInput=true,
+                    NoUserSettingsOrSensorMutation=true};
+                File.WriteAllText(Path.Combine(directory,"THERMAL_GLASS_PROOF.json"),
+                    new JavaScriptSerializer().Serialize(result),new UTF8Encoding(false));
+                Console.WriteLine("TBME_THERMAL_GLASS_PROOF=PASS PAIRS="+cases+
+                    " MIN_HOT_RED="+hotMin+" MIN_CLEAR="+clearMin);
+                return 0;
+            }
+            catch(Exception ex)
+            {
+                Console.Error.WriteLine("TBME_THERMAL_GLASS_PROOF=FAIL "+ex);
+                return 72;
             }
         }
     }

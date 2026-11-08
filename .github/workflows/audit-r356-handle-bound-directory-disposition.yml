@@ -1,0 +1,67 @@
+name: R356 native handle-bound directory deletion feasibility (disposable Windows)
+on:
+  push:
+    branches: [audit/r356-handle-bound-directory-disposition]
+    paths:
+      - build/Test-R356-NativePinnedDirectoryDisposition.ps1
+      - build/Test-R356-RenameActor-Native.ps1
+      - .github/workflows/audit-r356-handle-bound-directory-disposition.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-handle-disposition:
+    name: R356 handle disposition ${{ matrix.host }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: A
+            os: windows-2025
+          - host: B
+            os: windows-2022
+    steps:
+      - name: Checkout pinned source without retaining credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Refuse non-disposable runner or mismatched source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or
+             $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or
+             $env:GITHUB_REPOSITORY -cne 'GOD13emad/TaskbarMonitorEnhanced' -or
+             $env:GITHUB_REF -cne 'refs/heads/audit/r356-handle-bound-directory-disposition' -or
+             $env:COMPUTERNAME -match '(?i)EMAD-PC|ALIEMAD|SAEID|LAPTOP' -or
+             (git rev-parse HEAD).Trim() -cne '${{ github.sha }}'){
+             throw 'R356_GUEST_OR_SHA_GUARD_FAILED'
+          }
+          $who=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+          if(!$who.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
+             throw 'R356_EXPECT_HOSTED_ADMIN_RUNNER'
+          }
+          'R356_DISPOSABLE_RUNNER_ONLY=PASS'
+      - name: Run independent Windows process rename and pinned handle disposition
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $native=Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+          $script=(Resolve-Path build/Test-R356-NativePinnedDirectoryDisposition.ps1).Path
+          & $native -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script -HostLabel '${{ matrix.host }}'
+          if($LASTEXITCODE -ne 0){
+             throw 'R356_HANDLE_DISPOSITION_NATIVE_PROTOTYPE_FAILED'
+          }
+      - name: Retain typed original Windows native result, even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R356-${{ matrix.host }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/R356_*/R356_DIRECTORY_DISPOSITION_NATIVE.json
+          retention-days: 7
+          if-no-files-found: warn

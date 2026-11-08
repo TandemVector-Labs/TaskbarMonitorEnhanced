@@ -1,0 +1,171 @@
+name: v1.7.6 - Full protected v1.7.5 upgrade and native acceptance
+on:
+  push:
+    branches: [fix/v1.7.6-glass-thermal-alert-r272]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-candidate:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Exact source checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Parser and versioned reproducible build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if((git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA){throw 'R273 source drift'}
+          foreach($p in @('build/Test-Upgrade175-R273.ps1','build/Test-UpgradeContract-R273.ps1','build/Test-Native-Presentation-R273.ps1')){
+            $t=$null;$e=$null
+            [void][Management.Automation.Language.Parser]::ParseFile((Resolve-Path $p).Path,[ref]$t,[ref]$e)
+            if(@($e).Count){throw ('R273 parser '+$p)}
+          }
+          ./build/Build.ps1
+          ./build/Generate-Sbom.ps1
+          ./build/Verify-Release-Metadata-R273.ps1 -SelfTest
+          ./build/Test-GlassThermal-R272.ps1 -MainPath ./build/_out/App/TaskbarMonitorEnhanced.exe -OutDir ./artifacts/r273-thermal-pixels
+          if($LASTEXITCODE -ne 0){throw 'R273 version/manifest/SPDX gate'}
+          $main='./build/_out/App/TaskbarMonitorEnhanced.exe'
+          $setup='./build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.6.exe'
+          $c=[ordered]@{Commit=$env:GITHUB_SHA;Version='1.7.6';Private=$true;NotForPublicInstallation=$true;MainSHA256=(Get-FileHash $main -Algorithm SHA256).Hash;SetupSHA256=(Get-FileHash $setup -Algorithm SHA256).Hash}
+          [IO.File]::WriteAllText((Join-Path $pwd 'build/_out/CANDIDATE.json'),($c|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+      - name: Actual compiled control, geometry, visibility and upgrade contracts
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $main='./build/_out/App/TaskbarMonitorEnhanced.exe'
+          ./build/Test-Appearance-R145.ps1 -MainPath $main -OutDir (Join-Path $env:RUNNER_TEMP 'R273_MODELS/APPEARANCE')
+          ./build/Test-SettingsUi-R244.ps1 -MainPath $main -OutDir (Join-Path $env:RUNNER_TEMP 'R273_MODELS/SETTINGS')
+          $ui=Get-Content (Join-Path $env:RUNNER_TEMP 'R273_MODELS/SETTINGS/R244_SETTINGS_UI.json') -Raw|ConvertFrom-Json
+          if($ui.Status -cne 'PASS_ALL_NINE_SETTINGS_PAGES_NO_CONTROL_OVERLAP' -or $ui.SettingsPages -ne 9 -or $ui.SiblingOverlapCount -ne 0){throw 'R244_NATIVE_SETTINGS_UI_LAYOUT_COLLISION'}
+          ./build/Test-Geometry-R150.ps1 -MainPath $main -OutDir (Join-Path $env:RUNNER_TEMP 'R273_MODELS/GEOMETRY')
+          ./build/Test-Visibility-R146.ps1 -MainPath $main -OutDir (Join-Path $env:RUNNER_TEMP 'R273_MODELS/VISIBILITY')
+          ./build/Test-UpgradeContract-R273.ps1 -SetupPath ./build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.6.exe -OutDir (Join-Path $env:RUNNER_TEMP 'R273_MODELS/UPGRADE')
+      - name: Preserve one exact candidate installer, not a release
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R273-candidate
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            build/_out/CANDIDATE.json
+            build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.6.exe
+      - name: Preserve model receipts and binary manifest
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R273-compiled-contracts
+          if-no-files-found: warn
+          retention-days: 21
+          path: |
+            ${{ runner.temp }}/R273_MODELS/**
+            artifacts/BUILD_MANIFEST.json
+            artifacts/SBOM.spdx.json
+            artifacts/r273-thermal-pixels/R272_ACCEPTANCE.json
+  upgrade-and-native:
+    needs: build-candidate
+    runs-on: windows-latest
+    timeout-minutes: 24
+    name: Real official 1.7.5 to 1.7.6 upgrade and native modes (${{ matrix.host }})
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [A, B]
+    steps:
+      - name: Fresh independent Windows source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Transfer exact previously compiled Setup bytes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: R273-candidate
+          path: build/_out
+      - name: Genuine official v1.7.5 upgrade preserving user data
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Test-Upgrade175-R273.ps1 -CandidateDir ./build/_out -HostLabel '${{ matrix.host }}'
+          $r=Get-Content (Join-Path $env:RUNNER_TEMP 'TBME_R273_UPGRADE_${{ matrix.host }}/R273_UPGRADE.json') -Raw|ConvertFrom-Json
+          if($r.Status -cne 'PASS_GENUINE_175_TO_176_SINGLE_ROOT_PRESERVATION_ROLLBACK_IDEMPOTENCE' -or $r.Commit -cne $env:GITHUB_SHA){throw 'R273 actual updater acceptance failed'}
+      - name: Native menu, Settings, Start, fullscreen and 1-percent regression on upgraded bytes
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Test-Native-Presentation-R273.ps1 -CandidateDir ./build/_out -HostLabel '${{ matrix.host }}' -UseInstalledCandidate
+          $r=Get-Content (Join-Path $env:RUNNER_TEMP 'TBME_R273_${{ matrix.host }}/R273_NATIVE.json') -Raw|ConvertFrom-Json
+          if($r.Status -cne 'PASS_REAL_MENU_SETTINGS_START_FULLSCREEN_TASKBAR_VISIBILITY_FOUR_MODES' -or @($r.TestedModes).Count -ne 4 -or $r.EventCommit -cne $env:GITHUB_SHA){throw 'R273 native four-mode evidence not accepted'}
+      - name: Preserve raw upgrade receipts and physical native pixels on success or failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R273-native-upgrade-${{ matrix.host }}
+          if-no-files-found: warn
+          retention-days: 21
+          path: |
+            ${{ runner.temp }}/TBME_R273_UPGRADE_${{ matrix.host }}/R273_UPGRADE.json
+            ${{ runner.temp }}/TBME_R273_${{ matrix.host }}/**
+
+  fresh-install-maintenance:
+    needs: build-candidate
+    name: "R273 truly fresh, repeated maintenance, legacy duplicate refusal ${{ matrix.host }}"
+    runs-on: ${{ matrix.system }}
+    timeout-minutes: 23
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: A
+            system: windows-2025
+          - host: B
+            system: windows-2022
+    steps:
+      - name: Fresh disposable Windows source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Download compiled exact candidate, not public Setup
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: R273-candidate
+          path: build/_out
+      - name: Prove no root-source duplication, two maintenance calls and conflict refusal
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Test-R273-FreshSameVersion-Disposable.ps1 -CandidateDir ./build/_out -HostLabel '${{ matrix.host }}'
+          $receipt=Join-Path $env:RUNNER_TEMP 'TBME_R273_${{ matrix.host }}/R273_FRESH.json'
+          if(!(Test-Path $receipt)){throw 'R273_FRESH_RECEIPT_MISSING'}
+          $r=Get-Content $receipt -Raw|ConvertFrom-Json
+          if($r.Status -cne 'PASS_REAL_GUEST_FRESH_R273_NO_REDUNDANT_SOURCE_AND_TWICE_IDEMPOTENT' -or
+             $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.SingleManagedSourceWithoutRootDuplicate -ne $true -or
+             $r.FreshInstallExit -ne 0 -or
+             $r.FirstSameVersionMaintenanceExit -ne 0 -or
+             $r.NegativeProgramFilesCollisionExit -ne 34 -or
+             $r.SecondSameVersionMaintenanceExit -ne 0 -or
+             $r.ProtectedCanaryAndConfigPreserved -ne $true -or
+             $r.PublicSetupChanged -ne $false -or
+             $r.PersonalComputerTouched -ne $false -or
+             $r.RealHKLMRegistryOrCrossUserAcceptance -ne $false){
+             throw 'R273_REAL_FRESH_INSTALL_OR_DATA_SCOPE_NOT_PASS'
+          }
+          'R273_REAL_TWO_HOST_FRESH_AND_REPEATED_MAINTENANCE=PASS'
+          # The job invokes native commands in the child test; only after all
+          # receipt assertions passed reset stale native LASTEXITCODE.
+          $global:LASTEXITCODE=0
+      - name: Save bounded disposable fresh-only receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R273-fresh-${{ matrix.host }}
+          if-no-files-found: warn
+          retention-days: 21
+          path: |
+            ${{ runner.temp }}/TBME_R273_${{ matrix.host }}/R273_FRESH.json

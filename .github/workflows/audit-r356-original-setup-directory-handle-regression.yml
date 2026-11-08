@@ -1,0 +1,105 @@
+name: R356 original PE Setup deletion by pinned handles (disposable Windows)
+on:
+  push:
+    branches: [audit/r356-handle-bound-directory-disposition]
+    paths:
+      - installer/TaskbarMonitorEnhanced_Setup.cs
+      - build/Test-R356-OriginalDeferredCleanup-Regression-Native.ps1
+      - build/Test-R356-OriginalConcurrentRename-Regression-Native.ps1
+      - build/Test-R356-OriginalConcurrentRenameActor-Native.ps1
+      - .github/workflows/audit-r356-original-setup-directory-handle-regression.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  original-setup:
+    name: R356 original Setup ${{ matrix.mode }} ${{ matrix.host }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [Nominal, RootJunction, ChildJunction, LiveRace]
+        host: [A, B]
+        include:
+          - host: A
+            os: windows-2025
+          - host: B
+            os: windows-2022
+    steps:
+      - name: Checkout immutable head without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Refuse non-disposable runner and preexisting installed product
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or
+             $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or
+             $env:GITHUB_REPOSITORY -cne 'GOD13emad/TaskbarMonitorEnhanced' -or
+             $env:GITHUB_REF -cne 'refs/heads/audit/r356-handle-bound-directory-disposition' -or
+             $env:COMPUTERNAME -match '(?i)EMAD-PC|ALIEMAD|SAEID|LAPTOP' -or
+             (git rev-parse HEAD).Trim() -cne '${{ github.sha }}'){
+             throw 'R356_ONLY_EXACT_DISPOSABLE_WINDOWS_GUEST'
+          }
+          $app=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TaskbarMonitorEnhanced'
+          $protected=Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'TaskbarMonitorEnhanced'
+          if((Test-Path -LiteralPath $app) -or (Test-Path -LiteralPath $protected) -or
+             @(Get-ScheduledTask -TaskName 'TaskbarMonitorEnhanced Sensor Broker' -TaskPath '\' -ErrorAction SilentlyContinue|Where-Object {$null -ne $_}).Count){
+             throw 'R356_REJECT_PREEXISTING_USER_INSTALLATION_OR_SCHEDULED_TASK'
+          }
+          $who=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+          if(!$who.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
+             throw 'R356_RUNNER_ALREADY_ADMIN_REQUIRED'
+          }
+          $marker=Join-Path $env:RUNNER_TEMP 'R354_PREBUILD_FRESH_GUEST.json'
+          if(Test-Path -LiteralPath $marker){throw 'R356_MARKER_PREEXISTS'}
+          $proof=[ordered]@{
+            Schema=1;Revision='R354';SourceCommit=$env:GITHUB_SHA
+            Host=$env:COMPUTERNAME
+            AppRootAbsentBeforeBuild=$true;ProtectedRootAbsentBeforeBuild=$true
+            TaskAbsentBeforeBuild=$true
+          }
+          [IO.File]::WriteAllText($marker,($proof|ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
+          'R356_HOSTED_PREBUILD_SANDBOX_GUARD_PASS'
+      - name: Install pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.400
+      - name: Build modified private Setup and four components
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Build.ps1
+          if($LASTEXITCODE -ne 0 -or
+             !(Test-Path -LiteralPath build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe)){
+             throw 'R356_PRIVATE_SETUP_BUILD_FAILED'
+          }
+      - name: Run actual production-source Setup generated deferred cleanup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $mode='${{ matrix.mode }}'
+          $source=(Resolve-Path .).Path
+          $script=if($mode -ceq 'LiveRace'){
+            (Resolve-Path build/Test-R356-OriginalConcurrentRename-Regression-Native.ps1).Path
+          }else{
+            (Resolve-Path build/Test-R356-OriginalDeferredCleanup-Regression-Native.ps1).Path
+          }
+          $native=Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+          & $native -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script -HostLabel '${{ matrix.host }}' -Mode $mode -SourceRoot $source
+          if($LASTEXITCODE -ne 0){throw 'R356_ORIGINAL_NATIVE_DEFERRED_CLEANUP_REGRESSION_FAILED'}
+      - name: Retain SHA-auditable original PE guest receipts on success or failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R356-prod-${{ matrix.mode }}-${{ matrix.host }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/R354_*/R354_ORIGINAL_DEFERRED_CLEANUP.json
+            ${{ runner.temp }}/R354_*/R355_LIVE_RENAME_ACTOR.json
+          retention-days: 7
+          if-no-files-found: warn

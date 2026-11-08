@@ -1,0 +1,95 @@
+name: R316 Compare Canonical Root CodeQL
+
+on:
+  push:
+    branches:
+      - audit/r308-sensor-journal-prewrite
+    paths:
+      - installer/TaskbarMonitorEnhanced_Setup.cs
+      - .github/workflows/audit-r316-codeql-root.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  source-to-sink:
+    name: CodeQL ${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline, candidate]
+    steps:
+      - name: Checkout comparison target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.variant == 'baseline' && '7a8f0bcb86f9a1be0c6ad0d0d019472d6fd62bee' || github.sha }}
+          persist-credentials: false
+      - name: Initialize CodeQL same engine and queries
+        uses: github/codeql-action/init@v4
+        with:
+          languages: csharp
+          build-mode: none
+          config: |
+            threat-models: local
+      - name: Analyze without uploading or dismissing any scanning alerts
+        uses: github/codeql-action/analyze@v4
+        with:
+          upload: never
+          output: codeql-results
+      - name: Compare Default Setup parity of C sharp sink findings from raw SARIF
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $files=@(Get-ChildItem -LiteralPath codeql-results -Recurse -Filter '*.sarif' -File)
+          if($files.Count -lt 1){throw 'R316_CODEQL_SARIF_NOT_GENERATED'}
+          $compiledReferences=0
+          $compilerErrorCount=0
+          $relevant=@()
+          $allCount=0
+          foreach($file in $files){
+            $sarif=Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -Depth 100
+            foreach($run in @($sarif.runs)){
+              $compiledReferences+=@($run.artifacts|Where-Object { [string]$_.location.uri -like '*TaskbarMonitorEnhanced_Setup.cs*' }).Count
+              foreach($invocation in @($run.invocations)){
+                $compilerErrorCount+=@($invocation.toolExecutionNotifications|Where-Object {[string]$_.message.text -match 'Error CS[0-9]{4}'}).Count
+              }
+              $allCount+=@($run.results).Count
+              $relevant+=@($run.results|Where-Object {
+                $_.ruleId -in @('cs/path-injection','cs/command-line-injection')
+              }|ForEach-Object {
+                [pscustomobject]@{Rule=$_.ruleId;Path=$_.locations[0].physicalLocation.artifactLocation.uri;Line=$_.locations[0].physicalLocation.region.startLine}
+              })
+            }
+          }
+          if($compiledReferences -lt 1){
+            throw ('R316_CODEQL_SOURCE_COVERAGE_NOT_VALID references='+$compiledReferences)
+          }
+          if('${{ matrix.variant }}' -eq 'baseline' -and $relevant.Count -lt 1){
+            throw 'R316_BASELINE_CODEQL_QUERY_COVERAGE_UNTRUSTWORTHY_ZERO'
+          }
+          $summary=[ordered]@{
+            Schema=1;Revision='R316';Mode='csharp-default-ubuntu-none-remote-and-local'
+            Variant='${{ matrix.variant }}'
+            AnalyzedCommit=(git rev-parse HEAD).Trim()
+            WorkflowCommit='${{ github.sha }}'
+            GeneratedSarifCount=$files.Count;AllFindings=$allCount;CompiledSetupReferences=$compiledReferences;CompilerErrors=$compilerErrorCount
+            ThreatModel='remote_and_local'
+            TargetFindingCount=$relevant.Count
+            PathInjectionCount=@($relevant|Where-Object Rule -eq 'cs/path-injection').Count
+            CommandLineInjectionCount=@($relevant|Where-Object Rule -eq 'cs/command-line-injection').Count
+            TargetFindings=@($relevant);SecurityAccepted=$false
+          }
+          [IO.File]::WriteAllText('r316-codeql-summary.json',($summary|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
+          'R316_CODEQL_COMPARE_VARIANT=${{ matrix.variant }} TARGET_COUNT='+$relevant.Count+' ALL_COUNT='+$allCount
+      - name: Preserve raw SARIF and bounded comparison summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: r316-codeql-${{ matrix.variant }}-${{ github.run_id }}
+          path: |
+            codeql-results
+            r316-codeql-summary.json
+          if-no-files-found: error
+          retention-days: 3
