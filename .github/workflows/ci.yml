@@ -555,6 +555,9 @@ jobs:
 
   r298-disposable-original-cleanup:
     needs: build
+    # This job installs on a disposable runner and is only eligible in canonical personal CI.
+    # Retain first-step, runtime GitHub-hosted/owner safety checks as defense in depth.
+    if: github.repository == 'GOD13emad/TaskbarMonitorEnhanced'
     runs-on: windows-latest
     timeout-minutes: 10
     permissions:
@@ -638,6 +641,9 @@ jobs:
   # The published 1.7.9 Setup is independently SHA-pinned before use.
   r299-public-v179-inplace-upgrade:
     needs: build
+    # This job installs on a disposable runner and is only eligible in canonical personal CI.
+    # Retain first-step, runtime GitHub-hosted/owner safety checks as defense in depth.
+    if: github.repository == 'GOD13emad/TaskbarMonitorEnhanced'
     runs-on: windows-latest
     timeout-minutes: 15
     permissions:
@@ -747,6 +753,9 @@ jobs:
   # R300: actual compiled 1.7.10 fresh install on fresh GitHub-hosted Windows.
   r300-disposable-fresh-install:
     needs: build
+    # This job installs on a disposable runner and is only eligible in canonical personal CI.
+    # Retain first-step, runtime GitHub-hosted/owner safety checks as defense in depth.
+    if: github.repository == 'GOD13emad/TaskbarMonitorEnhanced'
     runs-on: windows-latest
     timeout-minutes: 15
     permissions:
