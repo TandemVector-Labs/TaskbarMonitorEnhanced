@@ -1,0 +1,132 @@
+name: R338 Manual compiled CSharp CodeQL evidence
+
+on:
+  push:
+    branches:
+      - audit/r338-supervisor-argv-trust
+    paths:
+      - .github/workflows/audit-r338-manual-csharp-codeql.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  manual-compiled-csharp:
+    name: Manual compiled CSharp ${{ matrix.variant }} on Windows
+    runs-on: windows-2025
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline, candidate]
+    steps:
+      - name: Checkout exact reviewed product source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.variant == 'baseline' && '997c6f349fa64cfe6385113a9ede46d35479cc7a' || 'edf2610c20789028050b3ea76b1bee01c77d07bf' }}
+          persist-credentials: false
+      - name: Assert disposable Windows and exact committed comparison source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $expected="${{ matrix.variant == 'baseline' && '997c6f349fa64cfe6385113a9ede46d35479cc7a' || 'edf2610c20789028050b3ea76b1bee01c77d07bf' }}"
+          if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+              $env:RUNNER_OS -cne 'Windows' -or $env:COMPUTERNAME -match 'EMAD-PC' -or
+              (git rev-parse HEAD).Trim() -cne $expected) {
+            throw 'R338_EXPECTED_DISPOSABLE_EXACT_PRODUCT_COMMIT_NOT_CHECKED_OUT'
+          }
+          'R338_PINNED_WINDOWS_COMPILE_SOURCE='+$expected
+      - name: Install pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.400
+      - name: Initialize CodeQL for actual compiled CSharp
+        uses: github/codeql-action/init@v4
+        with:
+          languages: csharp
+          build-mode: manual
+          config: |
+            threat-models: local
+      - name: Build exact four .NET Framework projects under CodeQL tracer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          & pwsh -NoProfile -File ./build/Build.ps1
+          if($LASTEXITCODE -ne 0){throw 'R338_MANUAL_CODEQL_PRIVATE_REPRO_BUILD_FAILED'}
+          $required=@(
+            'build/_out/App/TaskbarMonitorEnhanced.exe',
+            'build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe',
+            'build/_out/Broker/TaskbarMonitorSensorBroker.exe',
+            'build/_out/Supervisor/TaskbarMonitorSensorSupervisor.exe'
+          )
+          foreach($p in $required){if(!(Test-Path -LiteralPath $p -PathType Leaf)){throw ('R338_EXPECTED_COMPILED_EXE_MISSING_'+$p)}}
+          'R338_FOUR_REAL_COMPILED_CSHARP_PE=PASS'
+      - name: Analyze compiled sources without publishing security alerts
+        uses: github/codeql-action/analyze@v4
+        with:
+          upload: never
+          output: codeql-results
+      - name: Verify raw compiled-source coverage and report diagnostics
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $sarifs=@(Get-ChildItem -LiteralPath codeql-results -Recurse -File -Filter '*.sarif')
+          if($sarifs.Count -ne 1){throw ('R338_MANUAL_CODEQL_EXPECTED_ONE_CSHARP_SARIF_GOT_'+$sarifs.Count)}
+          $sarif=Get-Content $sarifs[0].FullName -Raw|ConvertFrom-Json -Depth 100
+          if(@($sarif.runs).Count -ne 1){throw 'R338_COMPILED_SARIF_RUN_COUNT_NOT_ONE'}
+          $run=$sarif.runs[0]
+          $artifacts=@($run.artifacts)
+          $files=@($artifacts|ForEach-Object {$_.location.uri})
+          $setupRefs=@($files|Where-Object {$_ -like '*TaskbarMonitorEnhanced_Setup.cs*'}).Count
+          $appRefs=@($files|Where-Object {$_ -like '*TaskbarMonitorEnhanced.cs*'}).Count
+          $brokerRefs=@($files|Where-Object {$_ -like '*TaskbarMonitorSensorBroker.cs*'}).Count
+          $errors=0
+          foreach($invocation in @($run.invocations)){
+            $errors+=@($invocation.toolExecutionNotifications|Where-Object {$_.message.text -match 'Error CS[0-9]{4}'}).Count
+          }
+          if($setupRefs -lt 1 -or $appRefs -lt 1 -or $brokerRefs -lt 1){
+            throw ('R338_MANUAL_CODEQL_COMPILED_SOURCE_COVERAGE_INCOMPLETE:Setup='+$setupRefs+' App='+$appRefs+' Broker='+$brokerRefs)
+          }
+          $findings=@($run.results)
+          $setup=@($findings|Where-Object {$_.locations[0].physicalLocation.artifactLocation.uri -like '*TaskbarMonitorEnhanced_Setup.cs*'})
+          $supervisor=@($findings|Where-Object {$_.locations[0].physicalLocation.artifactLocation.uri -like '*TaskbarMonitorSensorSupervisor.cs*'})
+          $expected="${{ matrix.variant == 'baseline' && '997c6f349fa64cfe6385113a9ede46d35479cc7a' || 'edf2610c20789028050b3ea76b1bee01c77d07bf' }}"
+          if((git rev-parse HEAD).Trim() -cne $expected){throw 'R338_MANUAL_RESULTS_NOT_AT_CHECKED_OUT_SHA'}
+          $summary=[ordered]@{
+            Schema=1
+            Revision='R338'
+            SourceCommit=$expected
+            AnalysisWorkflowCommit='${{ github.sha }}'
+            Variant='${{ matrix.variant }}'
+            Status='SCOPED_MANUAL_BUILD_CSHARP_CODEQL_RAW_RESULTS'
+            AnalyzerBuildMode='manual'
+            ThreatModel='remote_and_local'
+            FourRealFrameworkProjectsBuilt=$true
+            CompiledSetupSourceCount=$setupRefs
+            CompiledMainSourceCount=$appRefs
+            CompiledBrokerSourceCount=$brokerRefs
+            CompilerErrorNotifications=$errors
+            TotalFindings=$findings.Count
+            SetupFindings=$setup.Count
+            SetupPath=@($setup|Where-Object ruleId -eq 'cs/path-injection').Count
+            SetupCommand=@($setup|Where-Object ruleId -eq 'cs/command-line-injection').Count
+            SupervisorCommand=@($supervisor|Where-Object ruleId -eq 'cs/command-line-injection').Count
+            WholeSecurityAccepted=$false
+            RealElevatedUacHelperCrashTested=$false
+            ProducedWithoutPublicCodeScanningUpload=$true
+          }
+          $outfile='r338-manual-codeql-summary.json'
+          [IO.File]::WriteAllText($outfile,($summary|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+          'R338_MANUAL_CSHARP_VARIANT=${{ matrix.variant }} SETUP='+$setup.Count+' ALL='+$findings.Count+' COMPILER_NOTIFICATIONS='+$errors
+      - name: Retain compact raw SARIF and scoped summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R338-manual-csharp-${{ matrix.variant }}-${{ github.run_id }}
+          path: |
+            codeql-results
+            r338-manual-codeql-summary.json
+          retention-days: 7
+          if-no-files-found: warn

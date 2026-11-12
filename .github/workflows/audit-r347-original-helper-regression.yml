@@ -1,0 +1,118 @@
+name: R347 full original Helper regression against broker directory leases (Windows)
+on:
+  push:
+    branches: [audit/r347-protected-broker-handle-lease]
+    paths:
+      - build/Test-R340-OriginalHelperActualUninstall-Native.ps1
+      - build/Test-R344-JournalAcl-MutationRights-Native.ps1
+      - build/Test-R344-UnownedSensorNoJournal-Native.ps1
+      - installer/TBME_Setup_Elevated_Helper.ps1
+      - .github/workflows/audit-r347-original-helper-regression.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  original-helper-uninstall:
+    name: R347 regression ${{ matrix.mode }} ${{ matrix.host }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [nominal, killed, posttask, postfile]
+        host: [A, B]
+        include:
+          - host: A
+            os: windows-2025
+          - host: B
+            os: windows-2022
+    steps:
+      - name: Checkout exact revision without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Refuse any non-disposable host, prior product, task or wrong ref
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or
+             $env:GITHUB_REF -cne 'refs/heads/audit/r347-protected-broker-handle-lease' -or
+             $env:GITHUB_REPOSITORY -cne 'GOD13emad/TaskbarMonitorEnhanced' -or
+             $env:COMPUTERNAME -match '(?i)EMAD-PC|ALIEMAD|SAEID|LAPTOP' -or
+             (git rev-parse HEAD).Trim() -cne '${{ github.sha }}'){
+            throw 'R340_REFUSE_WRONG_GUEST_OR_WRONG_SOURCE'
+          }
+          $root=Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'TaskbarMonitorEnhanced'
+          $app=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TaskbarMonitorEnhanced'
+          $main=Join-Path $app 'TaskbarMonitorEnhanced.exe'
+          if((Test-Path -LiteralPath $root) -or (Test-Path -LiteralPath $main) -or
+             @(Get-ScheduledTask -TaskName 'TaskbarMonitorEnhanced Sensor Broker' -TaskPath '\' -ErrorAction SilentlyContinue|Where-Object {$null -ne $_}).Count){
+            throw 'R340_ALREADY_INSTALLED_PRODUCT_OR_SENSOR_TASK_GUEST_REFUSED'
+          }
+          $principal=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+          if(!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
+            throw 'R340_NOT_ALREADY_ADMIN_NEVER_DISABLE_UAC'
+          }
+          'R340_DISPOSABLE_ADMIN_TOKEN_AND_NO_PRODUCT_PASS'
+      - name: Install pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.400
+      - name: Build exact reviewed product including production PE-embedded Helper
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Build.ps1
+          if($LASTEXITCODE -ne 0 -or
+             !(Test-Path -LiteralPath build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.8.exe)){
+            throw 'R340_PRODUCT_EXACT_SETUP_NOT_COMPILED'
+          }
+          'R340_ALL_FOUR_FRAMEWORK_PRODUCT_COMPONENTS_BUILD_SUCCESS'
+      - name: Validate real PE-embedded journal ACL reject/allow semantics
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $native=Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+          $script=(Resolve-Path build/Test-R344-JournalAcl-MutationRights-Native.ps1).Path
+          $source=(Resolve-Path .).Path
+          & $native -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script -HostLabel '${{ matrix.host }}' -SourceRoot $source
+          if($LASTEXITCODE -ne 0){throw 'R344_ACTUAL_ACL_BIT_NEGATIVE_FAILED'}
+      - name: Refuse unowned or foreign protected Broker without a real journal
+        if: matrix.mode == 'nominal'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $native=Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+          $script=(Resolve-Path build/Test-R344-UnownedSensorNoJournal-Native.ps1).Path
+          $source=(Resolve-Path .).Path
+          & $native -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script -HostLabel '${{ matrix.host }}' -SourceRoot $source
+          if($LASTEXITCODE -ne 0){throw 'R344_ORIGINAL_HELPER_UNOWNED_WITHOUT_JOURNAL_REFUSAL_FAILED'}
+      - name: Launch exact unmodified RunAs production Helper on owned disabled test task
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $native=Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+          $script=(Resolve-Path build/Test-R340-OriginalHelperActualUninstall-Native.ps1).Path
+          $source=(Resolve-Path .).Path
+          $nativeArgs=@('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$script,'-HostLabel','${{ matrix.host }}','-SourceRoot',$source)
+          if('${{ matrix.mode }}' -ceq 'killed'){$nativeArgs+='-KillBeforeMutation'}
+          if('${{ matrix.mode }}' -ceq 'posttask'){$nativeArgs+='-KillAfterTaskRemoval'}
+          if('${{ matrix.mode }}' -ceq 'postfile'){$nativeArgs+='-KillAfterBrokerRemoval'}
+          & $native @nativeArgs
+          if($LASTEXITCODE -ne 0){
+            throw 'R340_ORIGINAL_ELEVATED_HELPER_PROTECTED_UNINSTALL_FAILED'
+          }
+      - name: Retain typed exact original Helper execution proof
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R347-regression-${{ matrix.mode }}-${{ matrix.host }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/R340_*/R340_REAL_PROTECTED_UNINSTALL_HELPER.json
+            ${{ runner.temp }}/R344Acl_*/R344_JOURNAL_ACL_MASK.json
+            ${{ runner.temp }}/R344Neg_*/R344_UNOWNED_FOREIGN_WITHOUT_JOURNAL.json
+          retention-days: 7
+          if-no-files-found: warn

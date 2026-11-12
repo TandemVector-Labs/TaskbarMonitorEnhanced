@@ -1,3 +1,381 @@
+<!-- TBME:R307_R347_R349_SECURITY_FORWARDPORT:BEGIN -->
+## R307 - v1.7.10 sensor Helper/Broker hardening and Supervisor trusted-path candidate
+
+- Verified 2026-11-08 after R310. Candidate branch security/r347-r349-helper-hardening-v1710, exact PR head 82963d0fc9f2bd2dfb9ac452cfde5dc384ef36dc, draft PR #98. Product fix commit c3bdfc6db5e9ab8d5fc8d75b94b3a1af0a382cd9; R340-only fixture follow-up 82963d0fc9f2bd2dfb9ac452cfde5dc384ef36dc. Forked from main 1883b4554461f06ee3be006168e37179c39a9433. Documentation-only PRs #99/#100/#101 merged as 9e080b1e107e1c718eccf0e3cabcf199603dcdaa, 31744ed219f3cc489714bf2d6a0de7d062ab1647 and 4a3aec2ab37ba50634a86624ab149bbc0afc3d30. Those documentation-only merges do not change product source; the security candidate remains on its separate draft branch. Independent human security review is requested from mohammadmohammadzadeh19960-code; pending, no review submitted. PR #98 remains draft and unmerged.
+- Production source forward-ports the Helper/Broker candidate from PR #80 and the R338 Supervisor candidate from PR #96. The pre-R310 Helper baseline matched PR #80 blob a3a967c869b247afd8ae7fe697565cabac8ff1d2; current Helper blob is 985616c912cb590e6440f294a6eaef27e1ec0f02 and contains R310 exact Task XML snapshot restore/revalidation. PR #80 has AI-assisted comments and hosted tests but no human approval; PR #96 has hosted/local evidence but no submitted review. Neither is counted as independent human security approval. Candidate product fix is c3bdfc6db5e9ab8d5fc8d75b94b3a1af0a382cd9; 82963d0fc9f2bd2dfb9ac452cfde5dc384ef36dc changes only R340 test fixture.
+- Setup retains v1.7.10 resource/version metadata, official v1.7.8 predecessor acceptance, and current-main R298/R356 handle-bound deferred uninstall cleanup. The broad v1.7.8-based PR #80 was not merged. Stale PR #87 was closed without merge after byte-level verification that its R298 cleanup block was already present in current main.
+- Helper security changes include canonical Profile/LocalAppData/Temp boundaries, UNC/reparse rejection, embedded-only trusted PowerShell execution, Base64 argument transport, pinned backend ZIP SHA-256 and archive validation, protected ProgramFiles reuse, main-image handle pinning, and owned-shortcut collision/deletion guards. R347 adds a protected directory lease; R349 adds an exclusive replay-leaf handle lease that blocks pre-existing WRITE and DELETE handles.
+- Supervisor R338 requires exactly the supported argv pairs, derives Broker/output paths from OS-known roots, rejects UNC/reparse components and hostile/malformed/extra args before process launch, and preserves valid local-volume LocalAppData redirection.
+- Local verification: build/Build.ps1 -NoDownload PASS (App, Broker, Supervisor, Setup; zero warnings/errors); selftest, feature-contract-selftest, workspace-selftest PASS (3/3); R298 native contract PASS; R338 compiled native proof 20/20 PASS; R335 native proof 23/23 PASS; Windows PowerShell 5.1 parse 12/12; six workflow YAML files parse; R310 synthetic exact-task restoration/intervening-change probes 2/2 PASS; PS5.1 and PowerShell 7 parse both changed scripts; git diff --check PASS. Candidate Setup SHA-256 2D552C53922117A41C1261A2F1F1F2F1346F4A591FC2DB375BB42B4FBD260423 is local candidate artifact only, not public release bytes.
+- Hosted Build and Verification run 42498216754 completed 4/4 jobs SUCCESS on product-fix commit c3bdfc6: main build 28/28 including R85 absent-PawnIO safe degradation, R298 contract, deterministic clean clone, 49-theme Glass, R272 thermal warnings, R244 Settings overlap, runtime probes, SBOM and attestations; R300 fresh install 8/8; R298 actual compiled Setup cleanup 8/8; R299 public v1.7.9-to-candidate-v1.7.10 in-place upgrade 10/10. Latest 82963d0 changes only R340 fixture.
+- Hosted R338 run 42498216744 passed 4/4 Windows 2022/2025 baseline/candidate jobs; R290 run 42498216631 passed 2/2; R291 real Explorer Start/Settings/Glass run 42498216635 passed 2/2 on product-fix commit c3bdfc6.
+- Hosted R337 baseline/candidate run 42498211999 passed 4/4; R347 protected directory lease 42498212012 passed 2/2; R349 privileged leaf lease 42498211998 passed 2/2 on c3bdfc6. Current R344 actual Helper/ACL run 42498804267 passed 8/8 on latest head 82963d0 across Windows Server 2022/2025. All eight actual embedded Helper runs passed; four posttask/postfile receipts verify injected task-settings drift, cold journal replay, byte-exact prior Task XML restoration and final protected-root removal. Historical R339 2/2 and R340/R344 8/8 on commit 50348412756c9502a1513e9d6ec66623b671abb2 remain scoped to their earlier source and do not substitute for the R310 recovery proof.
+- Initial failures were retained and diagnosed, not waived: R339 initially lacked the R338 Supervisor method; R337 used the wrong baseline/Setup artifact name; R298's source-contract marker was omitted during port; R85 initially ran after another fixture had created the canonical AppRoot; one R291 Windows 2022 run transiently missed a Settings menu item. The fixes restored the correct R338 source, historical R337 baseline and versioned Setup path, R298 marker, fresh-phase hosted-only R85 execution, and R291 rerun. The latest exact-head Build and R291 matrices passed.
+- Owner-device boundary: no installed app, process, task, service, registry, setting, or user file was changed in this revision. The R85 test refuses non-GitHub-hosted Windows and refuses an existing canonical AppRoot; its local invocation was refused before mutation. The last owner runtime state remains the read-only R305/R306 snapshot; no new owner upgrade or GUI takeover was attempted. Public immutable v1.7.10 release bytes/tag remain unchanged.
+- AI-assisted technical self-review on 2026-11-08 (not human approval): finding (1) task snapshot fidelity is fixed and hosted-tested in the cold-replay scope. Helper compares live exported Task XML with the journal snapshot, revalidates owner/action/trigger/XML policy, re-exports to fail closed on intervening change, restores exact prior XML and verifies byte-exact read-back. R310 local probes passed 2/2; hosted R344 passed 8/8 across Windows Server 2022/2025, with all four posttask/postfile receipts proving drift injection, cold replay, exact Task XML restoration and protected-root cleanup. Finding (2) remains open: native R347/R349 directory/leaf leases are used in cold journal replay, while normal Uninstall and in-process rollback still use recursive Remove-Item without those leases. Static junction canaries were preserved, but concurrent privileged reparse/rename substitution in those live paths is not proven. A follow-up R311 local Temp proof-of-concept (not integrated or hosted) passed 4/4: DELETE-access handles with no share-delete blocked root rename, deleted files/directories by handle, and rejected reparse junction and hardlink entries. This supports a possible handle-bound tree-delete implementation for live paths but is not production acceptance. This remains a coverage limitation, not a demonstrated exploit.
+- Next actions: obtain independent human security review for PR #98. If finding (2) is not explicitly accepted, implement and host-test R311 handle-bound tree deletion for normal Uninstall and in-process rollback. Keep the PR draft/unmerged and do not publish new release bytes. Personal Start/Settings/Glass takeover remains governed by the existing explicit owner GUI authorization boundary; Issue #6 still awaits original reporter hash/origin evidence.
+<!-- TBME:R307_R347_R349_SECURITY_FORWARDPORT:END -->
+
+<!-- TBME:R306_R338_SUPERVISOR_ARGV_CANDIDATE:BEGIN -->
+## R306 — R338 Supervisor trusted-argv forward-port candidate
+
+- Verified 2026-11-08T06:15:13.3078879Z. Starting from current immutable main baseline 035e8fc5db2fc020e539ec930a10770b9807d318, the exact compiled original Supervisor PE SHA-256 0E28911AACDE0C3B1C6997C8BC6FF141C0FAA650B58438A9991CB3AD6C13C785 reproduced acceptance of a foreign --broker, foreign --output, and unexpected extra flags in a 3-check reflection-only proof. No Broker process was started; the external canary remained byte-identical.
+- Isolated forward-port changes only src/sensors/TaskbarMonitorSensorSupervisor.cs, build/Test-R338-SupervisorTrustedArgs-Native.ps1, and .github/workflows/audit-r338-supervisor-argv-trust.yml. Candidate commit 9394071f9bf922165ca3282c45d4e4408dd12dc3 is on security/r338-supervisor-trusted-argv-v1710; PR #96 is OPEN, READY FOR REVIEW, mergeable, and not merged.
+- Production parser now requires exactly four tokens and the two supported flag/value pairs, rejects null/empty, duplicate, unknown, truncated and extra arguments, and derives Broker/output paths only from the running image directory and OS-known ProgramFiles/UserProfile/LocalAppData. UNC and reparse-point components fail closed. A redirected LocalAppData on another local volume is accepted; UNC profile/LocalAppData is intentionally unsupported for this high-integrity worker path.
+- Scope is explicitly limited: path/reparse checks are not an atomic rename-race or hardlink lease. This PR does not claim to close those separate LocalAppData file-operation risks. The existing PR #80 helper/broker security work remains separate.
+- Local compiled candidate Supervisor SHA-256 1768789EA1C2D9B79A0B34B06276E7F32AAFDA11BC158EED6EA62DA448E852FB; 16/16 native contract checks PASS: canonical paths, local LocalAppData redirection, UNC rejection, hostile/malformed argv, output escape, real Windows broker junction refusal, recovery after junction removal, and unchanged external canary. No Broker process was started.
+- Full local build/Build.ps1 -NoDownload PASS for App, Broker, Supervisor and Setup: zero warnings/errors; selftest, feature-contract-selftest and workspace-selftest all PASS. The final source delta after this local build was a comment-only clarification of the non-atomic/non-hardlink scope; the exact final PR commit then passed the hosted Build and Verification workflow.
+- Read-only owner task inspection confirmed an interactive scheduled task with RunLevel Highest and exact canonical ProgramFiles Broker path plus LocalAppData CPU telemetry output matching the new accepted contract. This is configuration observation only, not candidate installation or process execution.
+- Hosted checks completed successfully on exact PR head: R338 baseline/candidate Windows 2022/2025 matrix 4/4 PASS (run 42453276323); Build and Verification 4/4 PASS including original Setup upgrade, fresh install and R298 cleanup (run 42453276343); R290 native Win32 Z-order 2/2 PASS (run 42453276421); R291 real Explorer Start/Settings/Glass 2/2 PASS after retry (run 42453276218). The first Windows 2025 R291 attempt transiently failed glass0_TASKBAR_REAPPEARS; its rerun passed, and Windows 2022 passed on its first attempt. Preserve this as a flaky UI observation, not an R338 regression attribution.
+- R356 pinned-directory deletion is already in current main through R298; do not re-port. The broad PR #80 remains based on v1.7.8 and must not be merged wholesale. Other R347/R349/helper hardening remains separate pending review/forward-port.
+- Owner device remains unchanged: installed version 1.7.9; Main PID 21116 remains running in Session 2. Fresh R303 preflight PASSes its baseline but reports RUNNING_PROCESSES=1 and SAFE_TO_APPLY_NOW=False; the immutable official v1.7.10 Setup SHA-256 remains 1D0326CF11CEE069AD295112A9CA49D9FCBDB58ECDAB46FFE9C0F7172CE26D7E. User configuration content was not read.
+- Current GUI policy still reports explicitTakeoverRequired=true, workflowTakeoverAllowed=false, ownerAuthorizedTakeover=false. No mouse/keyboard, focus, WM_CLOSE, process termination, or installer action was attempted. Personal upgrade and dynamic Start/Settings/Glass acceptance remain OPEN. Issue #6 remains OPEN awaiting the original reporter's driver SHA-256 and download/install origin.
+- Exact next actions: obtain independent security review for PR #96; for owner deployment, obtain current explicit GUI takeover authorization or have the owner use the normal app context-menu Exit, rerun guarded R303 preflight, and invoke /update /quiet only when SAFE_TO_APPLY_NOW=True. Do not merge or publish new release bytes before independent review.
+<!-- TBME:R306_R338_SUPERVISOR_ARGV_CANDIDATE:END -->
+
+<!-- TBME:R305_OWNER_RUNTIME_AND_BRANCH_RECONCILIATION:BEGIN -->
+## R305 — owner runtime and repository continuation check
+
+- Verified 2026-11-08T04:58:45.9354472Z on the owner Windows 11 session as a read-only follow-up to R303/R304. No product source, user preference, or installed file was changed.
+- Guarded R303 preflight remains PASS: the official v1.7.10 Setup SHA-256 matches the immutable release; installed v1.7.9 Main/Setup match the pinned predecessor. The preflight reports RUNNING_PROCESSES=1 and SAFE_TO_APPLY_NOW=False; no /update was invoked.
+- One installed v1.7.9 Main, one Sensor Supervisor, and two Sensor Brokers remained present in owner Session 2. This is a process-presence snapshot, not a new sensor functional acceptance.
+- In the sampled last 500 lines of the active application log, 12 CPU threshold-notification events were each paired with TEMPERATURE_WARNING_SOUND_REQUESTED; this proves application-side requests only, not an OS banner or audible physical speaker. Eight TASKBAR_ZORDER_OCCLUSION_REPAIR records all reported stillCovered=False and error=0. There were zero actual [ERROR] or [FATAL] severity records in that sample; error=0 is a success field, not an error-level log.
+- The separate current-day proof log still contains TRAFFIC_HISTORY_READ ArgumentException and TRAFFIC_HISTORY_WRITE IOException warnings after OVERLAY_CLEANUP reason=DISPOSE userExit=False; the existing R303 record attributes these to intentional negative test fixtures. No new evidence links them to user data corruption.
+- Read-only Win32 enumeration again found the taskbar overlay and hidden app-owned windows, while MainWindowHandle=0. Native workspace observation returned WORKSPACE_DRIVER_UNAVAILABLE; target lease returned WORKSPACE_TARGET_WINDOW_CHANGED_OR_MISSING. Current GUI policy still reports workflowTakeoverAllowed=false and ownerAuthorizedTakeover=false. No focus change, raw input, WM_CLOSE, process termination, or installer action was attempted.
+- git fetch --prune origin reconciled the repository refs. Local main is clean and equals origin/main at ef4653188e9cf4cb8c72f3536fccaf0b45837773. The only non-main remote branches are development/v1.7.9-zorder-fix and pr80-security-review; both contain unique commits not merged into main and were preserved. The merged R304 documentation branch is absent locally and remotely.
+- Product release acceptance remains complete for public immutable v1.7.10. Personal owner upgrade and dynamic Start/Settings/Glass witness remain open. Issue #6 remains open pending the original reporter's flagged driver SHA-256 and download/install origin. Physical AC interruption remains owner-excluded; the unsigned-release waiver is unchanged.
+- Exact next action: owner performs the application's normal context-menu Exit; then rerun the guarded R303 preflight and invoke /update /quiet only when SAFE_TO_APPLY_NOW=True. Verify same-root installation, configuration/backend/startup preservation, and reopen the app before any personal UI acceptance. Do not bypass the GUI guard.
+<!-- TBME:R305_OWNER_RUNTIME_AND_BRANCH_RECONCILIATION:END -->
+
+<!-- TBME:R303_OWNER_HOST_READONLY_PREFLIGHT:BEGIN -->
+## R303 - owner computer release-PE verification and unresolved personal interaction gate
+
+- 2026-11-08T03:46:07.1871975Z: source Git main f4154e44caeb724e004b73a91dd4e4bd1a9e4176, release v1.7.10 tag 6effbb8083615f5673f6df22a3b0782b33595ad3. Public immutable release, CI and seven assets already accepted under R301; no change to published files.
+- Local, read-only execution of exact released Setup 1.7.10 /verify /verifyfile in the personal Windows session PASS: 25 embedded resources, expected Main SHA256 715CDA5E666E12C5FF2BCD46D513467CCEFEABE43A76F77689F604D4F432F2D7, PawnIOBundled=false; project-local receipt .local/audit/R303_OWNER_PC_RELEASE_SETUP_VERIFY.json SHA256 8F332CC62BBF72076B2ED60D9FA17F7C9C144D51FE6724E70E603E2747BED53B. User installed v1.7.9 Main/Uninstall and running process unchanged. Official release tag fetched and checked locally without branch mutation.
+- Live Win32 read-only window traversal found the current overlay hwnd 132402 directly parented to Explorer Shell_TrayWnd hwnd 65892, visible within taskbar bounds (both HWNDs ephemeral; not stable IDs). No standalone owner-controlled top-level application window was returned by Remote Commander. Provider workspace_agentos_plan BLOCKED SEMANTIC_PROVIDER_UNAVAILABLE and workspace_window_observe refused WORKSPACE_DRIVER_UNAVAILABLE. GUI policy explicitly disallows takeover without current attestation. Do NOT bypass with raw WM_CLOSE, SendInput or injected shell control.
+- Real owner application source has normal context menu Exit handler (UserExitRequested=true; Close()), but actual Setup UpgradeExisting calls EnsureAppNotRunning and rejects any still-running Main without mutation. Therefore installation cannot safely proceed until normal in-app Exit is triggered by an authorized owner UI or an attested GUI control provider. This is a genuine personal-device dependency, not a failed hosted upgrade.
+- Active owner log sample: no ERROR among last 800 entries; 17 CPU temperature warning events paired with sound requests, but red Glass rendering not physically witnessed. User config RecordTrafficHistory=false, no installed traffic_history.json. TRAFFIC_HISTORY_READ ArgumentException and WRITE IOException in separate short-lived daily test log match expected intentionally malformed/unwritable TrafficLedger negative fixtures in WorkspaceSelfTest; do not misclassify as active user data corruption.
+- Scoped current host vulnerable-driver investigation: no exact service R0TaskbarMonitor, WinRing0 or WinRing0x64, no reported legacy C:/Program Files/TaskbarMonitor/TaskbarMonitor.sys, current source/installer direct string hits zero, and PawnIO service running. Issue #6 https://github.com/GOD13emad/TaskbarMonitorEnhanced/issues/6#issuecomment-6716850981 remains OPEN: original reporter path, SHA, Defender state and provenance not proven. Do not claim security clearance or false positive.
+- Existing private Notion coordination mirror synchronized: https://app.notion.com/p/412d5b4a86f681c29173c01fc4c75842. No second technical authority.
+- Next acceptance: owner uses normal app context menu Exit, or an attested same-session semantic provider with permitted input; perform exact SHA-pinned /update /quiet and verify registry/user config and sensor canaries, then re-open and physically witness Start/Settings/Glass without another forced process termination. RELEASE_FINAL=PASS; OWNER_DEVICE_FINAL=PENDING.
+<!-- TBME:R303_OWNER_HOST_READONLY_PREFLIGHT:END -->
+
+---
+
+<!-- TBME:R301_IMMUTABLE_PUBLIC_V1710_RELEASE_VERIFIED:BEGIN -->
+## R301 - Official immutable v1.7.10 published, G16 public seven-asset verification PASS
+
+- Verified at 2026-11-08T03:27:36.7584507Z: public Latest immutable GitHub Release https://github.com/GOD13emad/TaskbarMonitorEnhanced/releases/tag/v1.7.10 (Release ID 438006233), published 2026-11-08T03:24:15Z; exact tag/manifest/source commit 6effbb8083615f5673f6df22a3b0782b33595ad3. Prior immutable v1.7.9 remains untouched.
+- Public distribution: exactly ONE unsigned TaskbarMonitorEnhanced_Setup_1.7.10.exe (8,613,376 bytes; SHA256 1D0326CF11CEE069AD295112A9CA49D9FCBDB58ECDAB46FFE9C0F7172CE26D7E), source ZIP of 395 tracked files, SPDX 2.3 SBOM, release notes, acceptance scope, checksum list and manifest: 7 public assets total. Get-AuthenticodeSignature was NotSigned. Previous owner unsigned approval was reused transparently, not replaced with a fabricated certificate or personal approval for this version.
+- Actual online, independent G16 proof downloaded and SHA-verified all seven public assets; manifest payload entries 5, checksum entries 6, immutable tag and source matched GitHub Main CI 42441872706, SUCCESS on exact 6effbb8. Receipt .local/R301_G16_PUBLIC_v1710.json SHA256 D1A741F2A1EE8C04612D9E4FDDD02B5FD1655005628B782064556D18BCB8A1A2. Scope: public package integrity, not a malware or exhaustive crash clearance.
+- Real disposable Windows GitHub-hosted CI: source PR #89 final run 42440771969 all four jobs SUCCESS (reproducible build, actual fresh 1.7.10 Setup, public SHA-pinned official 1.7.9 -> 1.7.10 /update with forced two-file COMMITTING crash recovery, native deferred-uninstall/Junction safety), merged product source main 90180fe8fd414b56ee49229c9954ea37c0235585. Version-locked R289/R290/R291 jobs were diagnosed at 1.7.9 preflight rather than falsely accepted as behavior failures; PR #91 migrated R290/R291 to current version and retained R289 on the historical branch. Source final main 6effbb8083615f5673f6df22a3b0782b33595ad3.
+- Exact final postmerge main CI 42441872706 ALL FOUR SUCCESS; hosted Win32 Z-order Windows 2022 and 2025 CI 42441872732 SUCCESS; real isolated Explorer Start/Settings/Glass Windows 2022 and 2025 CI 42441872710 SUCCESS. All evidence belongs to these hosted, scoped environments.
+- A concurrent verified publisher created immutable public Release assets while this R301 audit was running; no duplicate upload/publish was attempted. Release 438006233 content and all hashes match the locally verified seven-asset staging receipt. Local main and personal owner install were not mutated by publishing.
+- Owner PC remains running the exact original official v1.7.9 Main SHA256 04776E870A492733BBA33A550F732F5DB688A6585FC6533224A56687F1A6D88E and Uninstall/Setup SHA256 3AE5E2AC7428C3443FF7768C543117AF864E7C73F68D32EFAD4AB40B30FB5B0E; no live owner upgrade and no owner taskbar/GUI takeover performed. The user-directed personal Start/Settings/Glass dynamic transition is still OPEN; Issue #6 still needs original reporter hash/origin, physical power loss excluded by owner, and Notion project target not verified (similarly named TandemVector repository is NOT this repository).
+- Next safe action: owner-directed normal application exit and one-installer in-place update only when the personal GUI/upgrade acceptance can be witnessed. Never force-close owner process, downgrade public immutable v1.7.9, or silently alter config. FINAL system-wide claim remains conditional on personal dynamic witness.
+<!-- TBME:R301_IMMUTABLE_PUBLIC_V1710_RELEASE_VERIFIED:END -->
+
+---
+
+<!-- TBME:R299_OFFICIAL_V179_TO_V1710_HOSTED_UPGRADE_RECOVERY:BEGIN -->
+## R299 - Official v1.7.9 to unreleased v1.7.10: hosted real-Setup upgrade and crash recovery
+
+- 2026-11-08T02:35:47.3835692Z: Candidate draft PR #89 https://github.com/GOD13emad/TaskbarMonitorEnhanced/pull/89, exact tested HEAD 2f23541bc6599f8ad5f44b727fe540fcf5c28309, based on accepted main 326523274e5a90ed44226bbf75f9ba4e8984b5a0. This is a scoped candidate, NOT a public release or personal Windows upgrade.
+- Original immutable public 1.7.9 installer is 8,577,536 bytes and SHA256 3AE5E2AC7428C3443FF7768C543117AF864E7C73F68D32EFAD4AB40B30FB5B0E; original Main SHA256 04776E870A492733BBA33A550F732F5DB688A6585FC6533224A56687F1A6D88E. Exactly 21 original Setup embedded resource hashes plus original Setup itself matched 22 installed managed files. Owner local read-only proof .local/audit/r299-v179-managed-pins-verified.json SHA256 12C4C9B78BA270809257CA5EC138401A4A9F424B492E2386E6590F4E91267FB8. User config not read by the inventory.
+- Candidate 1.7.10 includes the R298 reviewed handle-pinned native deferred uninstall, exact public 1.7.9 predecessor 22-file hashes and identity guards, one-root in-place upgrade journal, transactional release-notes replacement and idempotence. Local Build, native junction refusal, 5 predecessor identity negatives, SBOM and R273 hostile metadata tests passed. Historical broad PR #80 remains unmerged.
+- GitHub Actions https://github.com/GOD13emad/TaskbarMonitorEnhanced/actions/runs/42437886140 at exact head 03931cfe1c0fcd3f73a381212edfbd2d2ec3698d completed SUCCESS for all 3 hosted Windows jobs: Build/Determinism/G13-G16/Glass/Settings/Runtime/SBOM; pinned original Setup native delete/junction; independent real original Setup v1.7.9-to-1.7.10 /update /quiet on a fresh synthetic guest. Edited predecessor refused before mutation, external canary, user config, sensor backend, startup and registry preferences preserved; second update idempotent. Hosted artifact r299-public-v179-upgrade-receipt.
+- Stronger GitHub Actions https://github.com/GOD13emad/TaskbarMonitorEnhanced/actions/runs/42438736122 at exact head 2f23541bc6599f8ad5f44b727fe540fcf5c28309 completed SUCCESS for all 3 Windows-hosted jobs. On the fresh synthetic guest a separately spawned test child staged exact compiled Setup files and physically swapped two managed files with COMMITTING journal. Parent verified child PID, commit, stage and SHA values, then forcibly terminated only that owned synthetic child. Actual compiled candidate Setup recovered the interrupted journal then upgraded in-place; log proof R299_HOSTED_ABRUPT_TWO_FILE_COMMITTING_RECOVERED_BY_REAL_SETUP=PASS. User config, sensor backend, autorun and external canary were preserved; second update idempotent. This is TWO-MANAGED-FILE COMMITTING coverage, not exhaustive interleaving or real personal GUI acceptance.
+- First crash-test harness failed before arming due to PowerShell 5.1 null File.Replace binding. The tested C# bridge replaced the test invocation only; product source unchanged. Owner v1.7.9 Main and Uninstall.exe hashes, current installation, settings and immutable seven public release assets unchanged. Candidate Draft is NOT merged or published. Owner physical Start/Settings witness remains blocked by non-attested GUI provider; Issue #6 reporter hash/origin and Notion sync quota remain external blockers.
+<!-- TBME:R299_OFFICIAL_V179_TO_V1710_HOSTED_UPGRADE_RECOVERY:END -->
+
+---
+
+<!-- TBME:R298_PINNED_UNINSTALL_FORWARDPORT_CANDIDATE:BEGIN -->
+## R298 - Hosted-tested future-version uninstall security candidate, NOT in public v1.7.9
+
+- Evaluated at 2026-11-08T01:32:06.2390949Z: isolated draft PR #87 (https://github.com/GOD13emad/TaskbarMonitorEnhanced/pull/87), exact review head dc7e52e5679b5fdcec8e082af79a90a0999f5824 and accepted base main a07542f4fc02abfa40c3e1d40c707f04e89bfaa6. Only the deferred user-root uninstall cleanup in installer/TaskbarMonitorEnhanced_Setup.cs, a native local contract test, a hosted-only actual-PE fixture test and scoped CI wiring changed. Older 89-file PR #80 remains separate, unmerged.
+- R298 replaces a mutable Temp batch-file cmd / rmdir cleanup with the earlier reviewed R356 handle-bound SetFileInformationByHandle(FileDispositionInfo) empty-directory deletion primitive. Identity policy includes canonical owner LocalAppData, SID, exact parent PID/start-time, rejection of reparse entries, final path from native handles and bounded in-memory native PowerShell. Official Microsoft CreateFileW and SetFileInformationByHandle contracts were consulted for directory and DELETE access permissions.
+- Local only: exact-source modified Setup Build.ps1 -NoDownload PASS; original Setup embeds the modified C# source; PowerShell 5.1 factory argument validation, script parsing, native Add-Type, disposable empty-directory pin/deletion and external Junction/canary rejection all PASS. Candidate Setup SHA256 43B286D4B8114CD99A4E44FFDFF69CA3D67596E349A0D83DF1FD687C1018793C, distinctly NOT the immutable official public v1.7.9 installer.
+- GitHub-hosted CI 42434200493 completed SUCCESS for both independent jobs. First job: full reproducible Build, deterministic clone, G13-G16, Native R298, 49-theme Glass thermal/UI settings, Sensor/PawnIO contract, runtime, Release manifest and SBOM PASS. Second fresh GitHub-hosted Windows job: no installed product/path/task/process preflight PASS, exact Setup artifact SHA matched Build Manifest, original compiled PE cleanup waited for test-owned parent to exit then deleted synthetic owner-only directory; a separate Junction to outside SHA-pinned canary was refused and outside bytes remained unchanged. No real owner uninstall was invoked. First same-job End-to-end attempt failed safely on an existing root created by Build workspace tests; it was fixed with a completely fresh runner, never by deleting existing data.
+- Main/public state remains fixed: official immutable v1.7.9 source commit 479ee78a214c7ae58177016d59468e50e815f54b, seven release assets, owner-installed Main SHA256 04776E870A492733BBA33A550F732F5DB688A6585FC6533224A56687F1A6D88E and owner Uninstall/Setup SHA256 3AE5E2AC7428C3443FF7768C543117AF864E7C73F68D32EFAD4AB40B30FB5B0E remain unchanged.
+- Acceptance boundary: R298 is a tested source candidate only. Do NOT merge or publish different bytes as public v1.7.9. Before promoting it, allocate a maintenance version, review compatibility with additional historical PR #80 hardening, and verify official v1.7.9 to new version in-place upgrade plus crash/recovery with separate pinned receipts. Real personal Start/Settings/Glass user-interaction witness remains open under current non-attested GUI provider; reporter issue #6 needs external original evidence. Notion sync still limited by the workspace quota. Signing waiver and physical AC-test exclusion remain unchanged.
+<!-- TBME:R298_PINNED_UNINSTALL_FORWARDPORT_CANDIDATE:END -->
+
+---
+
+<!-- TBME:R297_HISTORIC_RC6_PRIVATE_ARCHIVE:BEGIN -->
+## R297 - Verified private archival of historical RC6 CI scripts
+
+- 2026-11-08T00:50:43.2166301Z: 25 RC6 and 5 miscellaneous original September 2026 scripts verified against November 6 manifest bytes and SHA-256 (30/30 PASS). Original loose script root paths remain absent 30/30. A bounded common token-pattern inspection found no credential fingerprints; this cannot prove total absence of secrets. No historic script was executed.
+- The two complete folders moved on the same disk into the existing ignored local owner history at .local/history/legacy-rc6-ci-probes-20260919/rc6 and .local/history/legacy-rc6-ci-probes-20260919/misc. Their original manifest and README content was preserved and reverified. This R297 destination supersedes only the historic November 6 staging path in docs/project-control; the historical notes below remain unchanged.
+- These old executable workflow/runner probes are PRIVATE LOCAL historical data, not active source, build helpers or technical authority. They are intentionally excluded from public GitHub source. Official immutable v1.7.9 Release, user installation, settings and live processes were not modified.
+- Personal GUI Start/Settings dynamic transition is still unverified: Win32 read-only Z-order sampling found one visible Main overlay HWND before Shell_TrayWnd in taskbar bounds and a hidden app Settings HWND. This is only the static visible state, not a Start/Settings activation test. The current GUI backend retired legacy input and its native semantic provider did not attach to this window; no unsupported synthetic input was attempted.
+<!-- TBME:R297_HISTORIC_RC6_PRIVATE_ARCHIVE:END -->
+
+---
+
+<!-- TBME:R295_IMMUTABLE_PUBLIC_V179:BEGIN -->
+## R295 — Immutable public 1.7.9 released with independent seven-asset download verification
+
+- GitHub official public release [v1.7.9](https://github.com/GOD13emad/TaskbarMonitorEnhanced/releases/tag/v1.7.9) ID 427321765, published 2026-10-29T00:04:14Z, immutable=true, draft=false, prerelease=false, source commit 479ee78a214c7ae58177016d59468e50e815f54b. Public Latest is v1.7.9 and previous immutable releases remain unchanged.
+- The scoped one-shot release workflow 40791419343 at branch release/v1.7.9-publication-r295 built exactly source 479ee78 (not the release helper branch), passed negative G16, deterministic Build, SBOM and exact Main/Setup digest checks, staged seven assets, published using repository GITHUB_TOKEN contents:write, and completed public-downloaded G16 PASS. Workflow status completed/success.
+- Independent second G16 audit on the owner Windows host downloaded all seven public assets, compared public GitHub digest, manifest, SHA256SUMS and main CI: PASS_PUBLICATION_CONTENT_ONLY. Evidence .local/r295-public-g16-independent.json SHA256 BF6DBCF33ED9F7B98E010E6EB5941FF18AE5C19FFDC1D101935ABA74D8ABAEAA. Actual public Setup SHA256 3AE5E2AC7428C3443FF7768C543117AF864E7C73F68D32EFAD4AB40B30FB5B0E; matches installed maintenance and private owner-accepted exact Main SHA256 04776E870A492733BBA33A550F732F5DB688A6585FC6533224A56687F1A6D88E. Note: source zip and SBOM digests of GitHub runner packaging differ from older local staging due to tool-run generation; the public seven-asset manifest and downloaded bytes are self-consistent and separately verified.
+- Public GitHub Issue #7 existing tracker semantic-upsert R295 completed with latest release, hashes, CI, limitations and preserved historical R287/R285 sections. No release tag rewrite or obsolete asset deletion.
+- Owner install from R294 remains version 1.7.9, one user-session Main, sensor Supervisor/Brokers active, protected config and startup preserved and no incomplete journal. Separate owner interactive Windows 11 Start/Settings overlay dynamic transition was NOT witnessed by session-0 read-only GUI policy; hosted Windows native tests passed but are scoped to hosted environment, so personal GUI acceptance remains open. Older embedded installed RELEASE_NOTES_v1.7.9.md saying UNRELEASED is a release snapshot defect; public RELEASE_NOTES_v1.7.9.md accurately marks staged candidate at construction, immutable public release endpoint is current authority. Do not patch managed installed files behind Setup.
+- Connected Notion Project Planner sync creation attempted. Notion returned entitlement_required: workspace has exhausted free block quota; no side effects, no page created. The matching existing TandemVector-Labs registry entry is unrelated and was deliberately not overwritten. NOTION_SYNC_PENDING_FREE_BLOCK_LIMIT, not release blocker.
+- Security reporter Issue #6, independent physical audio/OS banner witness and personal dynamic Start/Settings remains open as externally scoped. Physical AC test and signing remain explicitly excluded. Public per-user unsigned v1.7.9 package release is COMPLETE, but whole-project FINAL requires separate acceptance of remaining mandatory user GUI behavior.
+<!-- TBME:R295_IMMUTABLE_PUBLIC_V179:END -->
+
+---
+
+<!-- TBME:R294_OWNER_UPGRADE_AND_RELEASE_CANDIDATE:BEGIN -->
+## R294 — Real owner v1.7.8 to v1.7.9 upgrade PASS; prepublication asset content verified
+
+- The owner closed the previously running 1.7.8 normally. A one-shot Task Scheduler InteractiveToken user task ran official SHA-pinned 1.7.9 Setup /update /quiet in owner Session 1. Two predecessor helper attempts failed safely at PREFLIGHT due PowerShell alias H -> Get-History, before Setup was invoked; they were reconciled and separate receipts retained locally. A corrected third attempt completed with Setup exit 0.
+- Evidence: .local/audit/r294-owner-upgrade-attempt3-receipt.json SHA256 4A95D788BBD8CD1C5FD55D03C5703B69C2DDCEA71854F07C7A66230628E764EF. Installed Main SHA256 04776E870A492733BBA33A550F732F5DB688A6585FC6533224A56687F1A6D88E; installed Uninstall/Setup SHA256 3AE5E2AC7428C3443FF7768C543117AF864E7C73F68D32EFAD4AB40B30FB5B0E. Registry, install_state, prior config/config.bak, autostart preference and sensor backend preservation PASS. No journal; one responding Main in user session and original sensor topology running. The one-shot task was unregistered after PASS.
+- Exact GitHub main commit 479ee78a214c7ae58177016d59468e50e815f54b rebuilt in a temporary detached clean worktree with pinned dependencies; 0 errors/warnings, 3 workspace tests, deterministic build and SBOM all PASS. All five runtime output hashes match the previously verified candidate and owner installation. Temporary worktree was removed after preservation of release assets.
+- Seven locally staged assets: .local/r294-v179-release-assets, including one Setup, exact-main public SOURCE.zip, SPDX SBOM, accurate release notes, manifest, SHA256SUMS and scoped acceptance record. SOURCE.zip SHA256 B46441B0D7636BF28AE99C3ECF6907C10A332BD69DABF8658817DB6DCEEE820A; manifest SHA256 0598D20173610D4089B91FFDE5E252CA1D32A183B96A7F4D0DDA578523086CFF. G16 validate_public_content PASS only against synthetic prepublication metadata, NOT public-GitHub asset download verification.
+- The live current 1.7.9 app startup log confirms overlay HWND/taskbar attach, temperature brokers ready and no recent app ERROR/FATAL following 03:00 startup. Traffic-history WARN logs at 03:02 coincide with workspace self-tests that exercise malformed/unwritable history, not yet evidence of an owner persistent data fault; current RecordTrafficHistory=false. User-selected GlassMode=false and opacity=0.01 were preserved, not changed.
+- Still OPEN: user-session Windows 11 Start/Settings/Glass dynamic interaction acceptance (read-only GUI connection cannot inject input); public v1.7.9 GitHub release creation/asset upload and live seven-asset G16 remain unexecuted because local gh token is invalid and connected GitHub app does not expose release creation/upload. Public Latest remains v1.7.8. Signing waiver and exclusion of physical AC interruption unchanged.
+- Notion project sync PENDING: the sole TaskbarMonitorEnhanced title in the connected registry maps TandemVector-Labs, not canonical GOD13emad. It was not changed.
+- No public GitHub release and no project-wide FINAL asserted. Priority next: native owner interactive Start/Settings witness -> authenticated official immutable v1.7.9 release of the seven staged assets -> independent real public download digest G16 -> correct-scope Notion sync.
+<!-- TBME:R294_OWNER_UPGRADE_AND_RELEASE_CANDIDATE:END -->
+
+---
+
+<!-- TBME:R293_OWNER_DEPLOYMENT_READINESS:BEGIN -->
+## R293 — Owner predeployment recovery and user-session execution verified; install/release not accepted
+
+- Main exact 479ee78 and nine hosted CI jobs PASS remain current. Local v1.7.9 Build PASS 0 warnings/0 errors; selftest, feature-contract, workspace and repro-build PASS; actual Setup /verify Process.ExitCode=0.
+- Setup SHA256: 3AE5E2AC7428C3443FF7768C543117AF864E7C73F68D32EFAD4AB40B30FB5B0E. The owner still runs official 1.7.8 Main SHA A3E9ABD7E97655AD6787B71239505F30A7C0350B77F352DE4DE83461CD170D31. No owner install mutation.
+- A temporary least-privilege InteractiveToken task successfully ran in owner Session 1 under the exact logged-on user; its exit status was 0 and the task was deleted. Evidence: .local/audit/r293-owner-session-probe.json. This proves a user-local headless path without taking over desktop input.
+- A private rollback archive of 22 SHA-pinned official v1.7.8 files and 3 protected user files was built, read back and verified 25/25; .local/recovery/owner-v178-pre-v179-managed-25.zip SHA256 3EB575535F250952419572958C4634DCC9BB9EDE47D38CA8ADD47D0F6E2078A5.
+- Owner live upgrade remains OPEN: the only running main app is in Session 1 and has no MainWindowHandle. Installer deliberately rejects updates while it is running. No forced termination, raw GUI injection, session-security workaround or invalid SYSTEM-profile install attempted. Next user action: normal Exit from product tray icon; then run SHA-checked Setup /update /quiet via owner InteractiveToken and verify installation, settings, health and Windows 11 visual behavior.
+- Official GitHub public Latest remains v1.7.8. Host gh token is invalid and push dry-run cannot authenticate; connected GitHub tool lacks Release creation/upload. Public release is NOT completed. Signing waiver and excluded physical AC test remain unchanged.
+- Notion catalog title match belongs to a different TandemVector-Labs repository; no unrelated Notion record was edited. NOTION_SYNC_PENDING for the correct GOD13emad project page.
+- Microsoft Learn SetWindowPos documents Windows session isolation; Task Scheduler InteractiveToken provides a supported already-logged-on-user route. CI hosted Start/Settings evidence is not personal Windows 11 acceptance.
+<!-- TBME:R293_OWNER_DEPLOYMENT_READINESS:END -->
+
+---
+
+<!-- TBME:R292_MAIN_INTEGRATION_AND_NATIVE_EXPLORER:BEGIN -->
+## R292 — Official main SOURCE integration complete; nine hosted CI jobs passed
+
+GitHub PR #83 was merged via squash at 1fa4ddb657f62671bbb2aa000826a9a88723251f.
+Follow-up main commit 479ee78a214c7ae58177016d59468e50e815f54b
+retired obsolete v1.7.8-only R286 from main and enabled path-scoped
+R289/R290/R291 for current main source updates. The historical R286 failure
+on the intermediate squash commit was the old 1.7.8 Setup filename pin and
+does NOT represent a v1.7.9 product failure. Current main has no R286 run.
+
+ALL nine GitHub-hosted jobs for exact main 479ee78 passed:
+- Full Build + Verification: 40782440671 (1/1 success).
+- R289 actual v1.7.8 -> 1.7.9 isolated in-place and crash-recovery:
+  40782440727 (3/3 success).
+- R290 native Win32 child/top-level overlay Z-order: 40782440719
+  (2/2 success; 12 native assertions per OS).
+- R291 REAL Explorer Start/Settings native UI on both hosted Windows
+  2022 and 2025: 40782440809 (3/3 success).
+  Four modes (plain1, plain10, glass0, opaque100) tested per host.
+  Each host supplied 28 native observations including 20 physical screenshot
+  SHA256/pixel-ink witnesses. Start menu observed with unchanged overlay
+  bounds in all four modes; Settings activation, fullscreen suppression and
+  taskbar hide/show verified. This is genuine hosted UI, but NOT personal
+  Windows 11 / particular monitor/DPI owner hardware acceptance.
+
+Local source code, installer, build and all four versioned CI workflows
+match remote main exactly after fetch. Local-only private project-control
+history remains unpushed in the one canonical project root/worktree.
+
+OPEN POST-MERGE DELIVERY GATES: actual user-session Windows 11 personal
+UI acceptance and safe, in-place v1.7.8 -> v1.7.9 owner deployment,
+new sole official Setup GitHub Release with public asset SHA and install
+receipt. Connected remote shell is SYSTEM session 0; GUI takeover/input is
+retired by provider policy, and local gh CLI is not authenticated. Never
+claim an owner update or public release until verified. Sole existing
+official setup and existing installed user files remain protected.
+
+Evidence: .local/audit/r292-main-r291-native-acceptance-and-ci-20261029.json
+<!-- TBME:R292_MAIN_INTEGRATION_AND_NATIVE_EXPLORER:END -->
+
+---
+<!-- TBME:R290_ALL_HOSTED_CI_PASS:BEGIN -->
+## R290 — Full latest public candidate CI VERIFIED PASS; owner visual pending
+
+Public-source-only candidate commit f3ffc051589f926c384cb03f372dffc64cc161b0
+is live in GitHub Draft PR #83, based on immutable v1.7.8 source. No
+owner-local Brain/History/evidence shipped in the 20 public changed files.
+
+All CI for THAT SAME exact commit is completed successfully:
+- R289 private build + exact installed v1.7.8 native in-place interruption/recovery:
+  https://github.com/GOD13emad/TaskbarMonitorEnhanced/actions/runs/40778327007
+  3/3 GitHub-hosted Windows jobs PASS.
+- R290 exact production native Win32 sibling and top-level Z-order probes:
+  https://github.com/GOD13emad/TaskbarMonitorEnhanced/actions/runs/40778327028
+  Windows 2022 and 2025: 12/12 assertions EACH, both job logs explicitly
+  R290_NATIVE_ZORDER_PASS and R290_TYPED_NATIVE_ZORDER_ACCEPTANCE_PASS.
+- Full PR Build and Verification:
+  https://github.com/GOD13emad/TaskbarMonitorEnhanced/actions/runs/40778334157
+  SUCCESS including 10 visual suites, Settings/Glass, G15 unsigned-signing
+  separation, G02 reproducibility, proprietary PawnIO exclusion, SPDX SBOM
+  and five hostile release metadata mutation tests rejected.
+
+Signed/unsigned and current release metadata regressions were updated for
+v1.7.9 without changing old immutable v1.7.8 upgrade SHA pins.
+The owner machine's intentionally forbidden driver test was NOT run there;
+the hosted equivalent passed. 101 reproduced temporary local build outputs
+(42,785,497 bytes) deleted, with SHA256 receipt. Sole official setup v1.7.8
+is preserved; candidate v1.7.9 remains uninstalled and unpublished.
+GitHub PR #83 is still Draft and unmerged, despite successful CI.
+
+IMPORTANT OPEN: real user interactive Windows Explorer Start/Settings and
+Glass-mode intermittent taskbar occlusion acceptance on owner-equivalent
+desktop and authorized correct-user deployment. Synthetic native HWND
+regressions are necessary but not sufficient to prove that UI behavior.
+No release, merge, or owner-install mutation until this last gate is verified.
+
+Latest receipt: .local/audit/r290-all-ci-gates-success-20261029.json
+<!-- TBME:R290_ALL_HOSTED_CI_PASS:END -->
+
+---
+<!-- TBME:R290_REAL_WIN32_PROBE_PREPARED:BEGIN -->
+## R290 — Native Win32 occlusion contract on disposable Windows (pending hosted result)
+
+Build/Test-R290-NativeZOrder-Windows.ps1 (script SHA256: 268160DCED58A3635E3B270388266F5BE1886E8ACFA7C886F4116FFBF62D74D6)
+uses an isolated real user32 Win32 temporary window hierarchy on GitHub-hosted
+Windows 2025/2022. It invokes production TaskbarPresentationNative.Above,
+TaskbarPresentationNative.TaskbarSiblingCovers, and the exact production
+ShouldRepairOcclusion guard through reflection. The twelve assertions exercise
+real top-level and child sibling Z-order, transient vs persistent overlap,
+Start/Settings suppression and cooldown. All native test windows are created
+and destroyed on the disposable guest only; no Explorer or owner state is changed.
+
+The workflow audit-r290-native-zorder.yml (SHA256: 30624469DEC2E3E268B32ADA7DA64EA9FAA28FA68345B61F41EBB8347153297E)
+compiles the private candidate, executes the native test under Windows PowerShell
+Desktop STA, checks receipt type/count/source SHA and uploads bounded evidence.
+Owner-host attempted invocation correctly refused without touching the owner.
+Do not conflate this synthetic native test with acceptance of actual Explorer,
+Start menu, owner Settings popup, or Glass visual appearance on a real desktop.
+Do not merge PR 83 or release v1.7.9 solely on this synthetic test.
+
+<!-- TBME:R290_REAL_WIN32_PROBE_PREPARED:END -->
+
+---
+<!-- TBME:R289_HOSTED_CI_PASS:BEGIN -->
+## R289 native Windows hosted upgrade and crash-recovery VERIFIED PASS
+
+Official-source-only GitHub candidate commit 2ac17b62c7661c420d18a5e1559325456a29c4bd
+was pushed on development/v1.7.9-zorder-fix; public branch contains only 12
+product/source/CI files, no owner-local Brain, History or private audit receipts.
+GitHub Actions run 40774004006 COMPLETED SUCCESS:
+  - windows-2025 candidate build: PASS
+  - windows-2025 interrupted-stage and cold native Setup retry: PASS
+  - windows-2022 forced real Setup kill during rollback and native retry: PASS
+Both guest job logs explicitly emitted R289_GUEST_TYPED_RECOVERY_PASS.
+Three bounded GitHub artifacts preserve candidate and guest receipts; local hash
+receipt .local/audit/r289-hosted-ci-acceptance-20261029.json.
+
+GitHub PR #83 is a DRAFT, not merged. main advanced only in public
+docs/project-control files; product code baseline unchanged.
+Host machine's official one Setup v1.7.8, installation, settings, system registry,
+taskbar and active process MUST remain untouched until the last independent
+real interactive Start/Settings/Glass/overlap verification. No physical owner
+GUI or real user desktop acceptance yet. Do not claim installed fix.
+
+<!-- TBME:R289_HOSTED_CI_PASS:END -->
+
+---
+<!-- TBME:R289_HOSTED_NATIVE_TEST_READY:BEGIN -->
+## R289 — Hosted Windows upgrade and interrupted recovery tests prepared, NOT YET EXECUTED
+
+Build source candidate 1.7.9 on GitHub-hosted windows-2025; the
+audit-r289-zorder-inplace-recovery workflow then tests actual setup/update
+from exact SHA-pinned official 1.7.8 on windows-2025 and windows-2022
+disposable runners. New files: build/Test-R289-ZOrder-InPlaceRecovery.ps1
+and build/official-v178-managed.json (22 original managed file hashes).
+The native test script refuses any owner/nonhosted execution, checked
+via explicit negative invocation on owner without changing settings.
+Parser and static workflow checks PASS. Native guest tests, source-only
+GitHub candidate branch, release and real owner update are still PENDING.
+No original v1.7.8 Setup has been overwritten, no new junction or checkout.
+
+<!-- TBME:R289_HOSTED_NATIVE_TEST_READY:END -->
+
+---
+<!-- TBME:R288_DISPOSABLE_VALIDATION_BLOCKER:BEGIN -->
+## R288 — Disposable Windows upgrade remains gated (2026-10-29)
+
+This read-only iteration reverified the v1.7.9 candidate and v1.7.8 owner without mutating the installation. All 22 official predecessor managed-file hashes match, along with the sole Setup, five protected installed paths, and the responding owner process. Zero Junctions and one worktree remain.
+
+The Windows Sandbox optional feature is enabled and a Sandbox process is present, but the connected shell is NT AUTHORITY\SYSTEM in session 0 while the owner interactive desktop is session 1. Prior GUI capture returned OWNER_GUI_RPC_REJECTED; no guest control, display visibility or isolated native upgrade has been demonstrated. Do not equate Windows Sandbox availability with a tested guest. The existing R286 native crash/recovery test explicitly refuses execution outside a GitHub-hosted disposable Windows runner. The local GitHub CLI token is invalid; the first-party GitHub connector has owner repo permissions, but there is no confirmed CI run for this candidate.
+
+Keep v1.7.9 UNRELEASED. Required next gates: isolated original official v1.7.8 -> candidate v1.7.9 /update /quiet, native power-interruption retry/rollback, and Start/Settings/Glass taskbar Z-order observation. No host install, process kill, desktop takeover, or new unsigned Setup publication occurred.
+
+Read-only R288 SHA256 receipt: .local/audit/r288-candidate-owner-safety-20261029.json
+
+<!-- TBME:R288_DISPOSABLE_VALIDATION_BLOCKER:END -->
+
+---
+<!-- TBME:R287_CANDIDATE_STATUS:BEGIN -->
+# Current local development candidate — v1.7.9 / R287 (2026-10-29)
+
+The active source contains the conditional taskbar Z-order occlusion fix and is a **candidate**, not a public release. Official v1.7.8 is the sole installed and sole Setup artifact. This section supersedes the older local v1.7.8 source/development statement below.
+
+- Based on the exact released v1.7.8 source 9960a06dba606d1c93b8ca2b84e0e3e25ca4f68d, with R287 occlusion repair. Product/version metadata now 1.7.9+r287; sources and installer compile together without warnings or errors.
+- Build.ps1: App, Broker, Supervisor and Setup PASS. Setup /verify PASS. Three app contract tests PASS. Candidate binary SHA256 3AE5E2AC7428C3443FF7768C543117AF864E7C73F68D32EFAD4AB40B30FB5B0E.
+- Upgrade identity guard: 22 official v1.7.8 file SHA256 values checked against the installed file set, including official v1.7.8 maintenance Setup; all matched. Isolated reflection test confirms surgical state update (Version and PublicVersion only), rejects a foreign predecessor channel, and verifies 34 target paths (23 added/updated, 11 deletions) with transactional install_state.json and Uninstall.exe.
+- Preserve the EXACT old official Setup in artifacts/in-place-update/ with SHA256 4DB3C03AC7AB70B3D3123A365C156E71370F0338991B399B99169A4B5B5F8B75. Do not replace it with a candidate until real isolated Win11 v1.7.8-to-v1.7.9 upgrade, sudden interruption/rollback, Start/Settings and physical occlusion tests pass.
+- The 100 generated candidate output files (42,784,832 bytes) including the duplicate candidate Setup were removed with SHA256 receipts. The tracked source can rebuild the candidate; no second Setup, second project root, Junction or extra Git worktree retained.
+- The current owner's app remains running v1.7.8, settings/installed state SHA unchanged and a candidate has NOT been installed. Windows Sandbox capability is enabled locally but no interactive disposable guest acceptance was conducted. Gated future publication, native GUI acceptance, safe unattended upgrade and rollback are open.
+- Authoritative receipts:
+  - .local/audit/candidate-v179-build-r287-20261029.json
+  - .local/audit/official-v178-installed-upgrade-identity-20261029.json
+  - .local/audit/candidate-v179-pinned-predecessor-reflection-20261029.json
+  - .local/audit/candidate-v179-upgrade-target-map-contract-20261029.json
+  - .local/audit/candidate-v179-reproducible-output-cleanup-20261029.jsonl
+
+<!-- TBME:R287_CANDIDATE_STATUS:END -->
+
+---
+<!-- TBME:LOCAL_ACTIVE_DEVELOPMENT_20261029:BEGIN -->
+# Active local in-place development — official v1.7.8 source (2026-10-29)
+
+This is the current local development authority. The R285 v1.7.7 public redacted mirror below remains historically valid for its older scope, but it is not the currently installed/source version.
+
+- One canonical development worktree, branch development/v1.7.8-inplace, based exactly on the published origin/main commit 9960a06dba606d1c93b8ca2b84e0e3e25ca4f68d. The prior feature/v1.7.0-wallpaper-studio branch is retained in Git for reversible provenance, not checked out as source. No extra repo, worktree or junction.
+- The sole official unsigned v1.7.8 Setup is in artifacts/in-place-update/ with SHA256 4DB3C03AC7AB70B3D3123A365C156E71370F0338991B399B99169A4B5B5F8B75. Embedded /verify PASS. The pinned standard build compiled Main, Broker, Supervisor and Setup; PE subsystem, canonical text, version/signing metadata all PASS. Rebuilt Setup SHA256 is exactly identical to the official Setup.
+- Three application contract tests (selftest, feature-contract-selftest, workspace-selftest) PASS. A process-local Git safe.directory override enabled the Windows SYSTEM-run test without changing global Git config or repository ownership.
+- **Candidate UI correction, NOT INSTALLED (2026-10-29):** The current v1.7.8 source checks real Z-order occlusion before restacking its glass/top-level or ordinary taskbar-child overlay. It waits two consecutive observations, cools down for 3 seconds, refuses Start/Search, fullscreen/hidden states, active Settings/menu and recovery transition, uses non-activating SetWindowPos only on its own HWND, and logs any repair result. Three app contract tests PASS, including six new deterministic fault-policy assertions; source compilation PASS. Installed owner binary and one official Setup SHA remain unchanged. Live native owner-session, visual Start/Settings and actual in-place upgrade for a future version are NOT independently verified. Evidence .local/audit/zorder-targeted-app-build-test-20261029.json SHA256 2AD723D90635A9864DDACDE529548DABC5DCFE948ECC0E44D47E801452789653; ignored build-output cleanup .local/audit/zorder-generated-output-cleanup-20261029.jsonl SHA256 33786077371150311E60EA624386E30A37E5AE9CBDC64C72C345705328B123B5.
+- Six isolated updater wrapper cases PASS: older-version preflight ready, current-version preflight no-op, current-version Apply no-op, newer-version downgrade rejection, foreign identity rejection, and missing installation rejection. These are simulated guard tests and not a real old-to-new installed upgrade.
+- After verification 99 generated output files totaling 42,729,705 bytes were removed with hash receipts. The only retained app Setup is the official artifact. Active dependencies live in an ordinary build/_deps directory; no heavy historical files or ETL/ETLX remain in .local.
+- Historical evidence recovery remains accepted: 1,009 original files / 40,492,233 bytes independently verified in .local/archive/historical-evidence; no duplicate external archive. User installation/configuration stays under Windows LocalAppData, outside the sole source repository.
+- OPEN: real installation upgrade from a genuinely older installed version to 1.7.8 on a disposable Windows target; no new publication or owner-install change performed. The prior whole-disk discovery was bounded, not exhaustive.
+- Build proof: .local/audit/official-v178-repro-build-summary-20261029.json
+- Six guard tests: .local/audit/inplace-wrapper-isolated-contracts-20261029.json
+- Output cleanup: .local/audit/official-v178-build-output-cleanup-20261029.jsonl
+
+<!-- TBME:LOCAL_ACTIVE_DEVELOPMENT_20261029:END -->
+
+---
+<!-- TBME:PUBLIC_CURRENT_R285:BEGIN -->
+# Current public release summary — R285 / official v1.7.7 (2026-10-17)
+
+Official immutable [v1.7.7 release](https://github.com/GOD13emad/TaskbarMonitorEnhanced/releases/tag/v1.7.7), ID 415382091, source commit dc68cf448173bd0808d1dfa54bc9e9bf7ca20aad. Single intentionally unsigned Setup SHA256 395AEE56006F55FD5DCCFB52E1519088CE01A10386840D7008C6BA900136A06D; shipped/owner Main SHA256 A6D4BFD00C918C0601A12D185F414E92F2B6A85927042B811537B0BC37606253. Exactly seven public assets independently re-downloaded against Manifest, SHA256SUMS and G16. This verifies content/publication, **not** independent malware certification.
+
+**Interruption bug fixed:** Real old v1.7.6 Setup process was killed during rollback on a disposable Windows guest; the retry failed due to abandoned owned .restore scratch. Versioned 1.7.7 safely recovers only known updater-owned transient scratch after verifying the journal/index and old snapshots. Exact-main [Build 38965519302](https://github.com/GOD13emad/TaskbarMonitorEnhanced/actions/runs/38965519302) PASS 27 steps; [hosted native Windows A/B 38965519445](https://github.com/GOD13emad/TaskbarMonitorEnhanced/actions/runs/38965519445) PASS including a real Setup-process kill in guest B. Real AC mains interruption was not tested and has been **excluded by the owner**.
+
+**Actual owner system:** The verified existing v1.7.6 per-user installation was updated in place with the official 1.7.7 Setup, Exit 0, and launched again. A preupgrade 26-file SHA-verified protected backup was preserved; exact five build-output hashes, one Main/one Supervisor/two Brokers, one HKCU registration, no extra HKLM install and cleared journal were verified. Glass true zero background alpha, red threshold warning settings and Windows notification preference remain enabled. v1.7.7 log records a real CPU 95°C warning dispatch at configured 85°C; direct actual OS banner/audio was **not independently witnessed**. Earlier R276 physical red pixels were verified on v1.7.6, and current behavior is retained by compiled regression/owner settings; no false claim of a new v1.7.7 physical pixel count.
+
+**Scope and residual limits:** [Reporter WinRing0 issue #6](https://github.com/GOD13emad/TaskbarMonitorEnhanced/issues/6) still needs original file SHA256/install source, and a signed local PawnIO version does not dismiss that separate reporter warning. Publisher signing is intentionally waived. One **per-user** installation is accepted; no machinewide global singleton/auto-login claim. Audible alert observation remains missing. Physical AC tests are not a required gate.
+
+The owner-local Index/Brain remains the single operational authority. This public page and [Issue #7](https://github.com/GOD13emad/TaskbarMonitorEnhanced/issues/7) are redacted mirrors; older engineering records following this block are preserved unchanged.
+
+<!-- TBME:PUBLIC_CURRENT_R285:END -->
+
+---
+
+## Historical engineering records — prior "CURRENT" headings are not current release claims
+
 # CURRENT R56 — real Start/Search 24/24 PASS; active Native ShellBeacon contract corrected, exact CI/host retest pending
 
 R54 exact source de6d2bb3025b551dabfd0bd792fb368a1d6f519c, 12 candidate gates plus 4 Stable blockers. R55 actual installed-path Main-only guarded seven-minute watchdog test on Emad with real CPU/RAM/GPU/network showed 2895 actual text and 2695 graph pixels. Full resident eight-case suite got 7 PASS: startup, hover, hardware, temperature, protected sensor health, support and START. START met 24/24 SearchHost real shell, 24/24 exact 60px safe float and actual per-frame glyph+chart ink, minimum 48647 foreground signal, ≥1492 text and 1625 chart changed pixels, exact native HWND return to taskbar with legible ink. Eighth ShellState FAIL DIRECT_CHILD_NOT_FOUND: stale child-only proof, expected since true-alpha 0–99% uses a top-level popup. R55 original public installed v1.6 exe/config hashes restored exact, old process running, personal Slideshow and AnyDesk protected; genuine 7/8 FAIL retained. R56 source ShellState now distinguishes real PID-owned native top-level layered/noactivate popup vs 100% opaque taskbar child; native PArgb active beacon performs synchronous real ULW upload, requires magenta/green ≥100 physical pixels and BOTH reset below100, plus real signal≥300, style/PID/geometry/uncloak. Code builds locally, actual installed eight-case retest and exact source CI pending. All external Stable gates still OPEN: approved real Picture WallpaperStudio positive apply/restore, complete installed v1.7 Setup incl Explorer/sensors/8/8 and rollback, public-trusted Authenticode, main+immutable release. Public version v1.6.0 immutable. User Slideshow mode2 untouched, SAEID host declined, no security bypass. Authority docs/project-control/R56_SHELL_BEACON_NATIVE_ACCEPTANCE.md and R54/R51/R49/R46 history, cumulative Brain R38–R55. Project weighted completion UNPROVEN.
@@ -1127,3 +1505,13 @@ This section is the current authority and supersedes the R31/R31B/R31C candidate
 - Current control: `docs/project-control/CURRENT_PROJECT.json`.
 - Acceptance: `docs/acceptance/v1.7.0/R40_PACKAGE_CANDIDATE_ACCEPTANCE.json`.
 - Exact next action: R41 single controlled live canary only — capture exact wallpaper/style/tile + AnyDesk/GUI pre-state, apply one Sekiro wallpaper from the exact candidate, verify, restore exact pre-state, then regression-check host stability. No install until R41 PASS.
+
+## TBME_LEGACY_RC6_25_LOCAL_CI_PROBES_OWNER_REHOME_20261106 — old self-hosted CI one-shots now owned in place
+
+**2026-11-06 | scoped file relocation PASS; no fresh CI/release/runtime acceptance.** A bounded first-level `C:\Users\Aa.Emad\source\repos` scan identified **25 original 2026-09-19 Python scripts** (28,320 original bytes) explicitly referring to TaskbarMonitorEnhanced or its GitHub repository, including ephemeral RC6 self-hosted runner setup, JIT API, workflow patching, failed-build tailing and old CI polling. These are not current project build helpers: they contain stale run IDs and hard-coded outside-root paths; some can mutate GitHub workflows/register runners and **must not be executed** as live commands. The active source checkout remained at Git HEAD `81cade72d0f94b7ce4e13fdf7f476e3b90000f2e` with **zero preexisting tracked dirty files**. Existing `.github` CI is the current authority; these are historical provenance only.
+
+The 25 scripts were grouped into one human-readable folder in this existing owner root: `docs\project-control\legacy_rc6_ci_probes_20260919`. Staged SHA-256 and source/target length parity **25/25 PASS** in operation `4b95d473-9c45-4c05-93dd-bb035d449f4c`; `MANIFEST.json` SHA256 `5583CAFF080997AE732CB5A2D2E9EA25AB92BD1284C33817DECEF8DBDB65C354`, `README.md` SHA `5CE664903DCC8E528D58BBFAEBF68641EA30FA5E5F45CBD6D54F67E4E77883C9`. Old source path retirement operation `d8e54f14-fd13-4a9c-9b57-bf3368fdc2c8` SUCCEEDED after all 25 hashes revalidated, no active script process or scheduled task and unchanged Git HEAD; 25 old paths absent, unchanged tracked source (pre-Brain update), top-level loose root regular files **554→529**. No user workflow/GitHub API action, runner registration, Git commit, symlink/Junction, app install, rollback or scientific model modified. Future replay requires independent review, GitHub owner approval and current temp-root instructions; historic success is not fresh acceptance.
+
+## TBME_LEGACY_FIVE_MISC_RC6_CI_PROBES_REHOME_20261106 — owner-root historical evidence only
+
+On 2026-11-06 five original Sept 19 shared CI/Actions probes (`_rc_compare_owner_repo_actions.py`, `_rc_get_actions_runner_release.py`, `_rc_list_r21_test_scripts.py`, `_rc_probe_real_pwsh.py`, `_rc_public_packages_probe.py`) totaling **2,876 source bytes** were SHA+length compared 5/5 and relocated within this existing owner root, `docs\project-control\legacy_misc_rc6_ci_probes_20260919`. Preserved historical hashes/UTC times in sole category `MANIFEST.json` SHA `DE5DACC39001830BAAADE695A0B27DCF9C6D704751467C425D34847466D28633`; stage op `c8cc5a78-5edb-4a00-81d0-ac51f7e7515f` and guarded retire op `403bedfc-84e9-4e91-b400-4f571cf28fb5` SUCCEEDED, all five root originals absent and no known task/process or bounded root caller. These old cloud/CI probes are **DO NOT EXECUTE** pending current external-service and source review. The accepted v1.7.9 release/current Git tracked source/CI, Windows install, workflows and research data were not altered; migration is file ownership scoped PASS only. See portfolio Registry event `PORTFOLIO_MAIN50_SCIENCE_REMOTE_SYSTEM_SCRIPTS_OWNED_20261106`.

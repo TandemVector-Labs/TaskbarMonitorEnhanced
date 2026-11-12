@@ -126,7 +126,21 @@ namespace TaskbarMonitorEnhanced
         {
             try
             {
-                Check(BuildInfo.PublicVersion=="1.7.2","version");
+                Check(BuildInfo.PublicVersion=="1.7.10","version");
+                // Fault-policy coverage: no unconditional topmost timer and no
+                // stealing focus from Start, fullscreen, Settings or our menu.
+                Check(!TaskbarPresentationPolicy.ShouldRepairOcclusion(
+                    false,false,false,2,99),"z-order healthy has no restack");
+                Check(!TaskbarPresentationPolicy.ShouldRepairOcclusion(
+                    true,false,false,1,99),"z-order one transient sample ignored");
+                Check(!TaskbarPresentationPolicy.ShouldRepairOcclusion(
+                    true,true,false,2,99),"z-order Start shell protected");
+                Check(!TaskbarPresentationPolicy.ShouldRepairOcclusion(
+                    true,false,true,2,99),"z-order dialogs protected");
+                Check(!TaskbarPresentationPolicy.ShouldRepairOcclusion(
+                    true,false,false,2,2.9),"z-order repair cooldown");
+                Check(TaskbarPresentationPolicy.ShouldRepairOcclusion(
+                    true,false,false,2,3.1),"z-order verified persistent overlap repairs");
                 for(int schema=0;schema<7;schema++){
                     var legacy=new AppConfig{ConfigSchemaVersion=schema,EnableTemperatureNotifications=true,CpuTempWarningC=0,FontSize=Double.NaN,Opacity=Double.NaN};legacy.Normalize();
                     Check(legacy.ConfigSchemaVersion==8,"all legacy schemas migrate "+schema);

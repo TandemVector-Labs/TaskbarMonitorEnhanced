@@ -1,0 +1,140 @@
+name: R291 real Explorer Start Settings and Glass hosted UI
+
+on:
+  push:
+    branches: [main, development/v1.7.10-zorder-fix]
+    paths:
+      - 'src/**'
+      - 'installer/**'
+      - 'build/**'
+      - '.github/workflows/audit-r291-real-explorer-start-settings-glass.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'installer/**'
+      - 'build/**'
+      - '.github/workflows/audit-r291-real-explorer-start-settings-glass.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    runs-on: windows-2025
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.400
+      - name: Build exact unsigned private candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or (git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA){
+            throw 'R291_BAD_GUEST_SOURCE'
+          }
+          ./build/Build.ps1
+          if($LASTEXITCODE -ne 0){throw 'R291_BUILD_FAILED'}
+          $setup='build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.10.exe'
+          $main='build/_out/App/TaskbarMonitorEnhanced.exe'
+          if(!(Test-Path $setup) -or !(Test-Path $main)){throw 'R291_PRIVATE_ARTIFACT_MISSING'}
+          $data=[ordered]@{Schema=1;Commit=$env:GITHUB_SHA;Version='1.7.10'
+            Private=$true;NotForPublicInstallation=$true
+            SetupSHA256=(Get-FileHash $setup).Hash;MainSHA256=(Get-FileHash $main).Hash}
+          [IO.File]::WriteAllText('build/_out/CANDIDATE.json',($data|ConvertTo-Json -Depth 4),[Text.UTF8Encoding]::new($false))
+          'R291_PRIVATE_HASH_MANIFEST_PASS'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R291-PRIVATE-CANDIDATE-NOT-FOR-RELEASE
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            build/_out/CANDIDATE.json
+            build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.10.exe
+            build/_out/App/TaskbarMonitorEnhanced.exe
+
+  real-explorer:
+    name: Native Start and Settings on ${{ matrix.os }}
+    needs: candidate
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 24
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: windows-2025, host: A}
+          - {os: windows-2022, host: B}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: R291-PRIVATE-CANDIDATE-NOT-FOR-RELEASE
+          path: _r291_candidate
+      - name: Host isolation and PS5 parser
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($PSVersionTable.PSEdition -cne 'Desktop' -or
+             $env:GITHUB_ACTIONS -cne 'true' -or
+             $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or
+             $env:COMPUTERNAME -match 'EMAD-PC' -or
+             ![Environment]::UserInteractive -or
+             (git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA){
+            throw 'R291_ONLY_FRESH_HOSTED_GUEST'
+          }
+          $s=(Resolve-Path build/Test-R291-ExplorerStart-Settings-Glass.ps1).Path
+          $tokens=$null;$errors=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($s,[ref]$tokens,[ref]$errors)
+          if(@($errors).Count){throw 'R291_SCRIPT_PARSER_ERROR'}
+          $m=Get-Content _r291_candidate/CANDIDATE.json -Raw|ConvertFrom-Json
+          if($m.Version -cne '1.7.10' -or $m.Commit -cne $env:GITHUB_SHA -or
+             $m.Private -ne $true -or $m.NotForPublicInstallation -ne $true){
+            throw 'R291_NON_PINNED_GUEST'
+          }
+          if((Get-FileHash _r291_candidate/Setup/TaskbarMonitorEnhanced_Setup_1.7.10.exe).Hash -cne $m.SetupSHA256 -or
+             (Get-FileHash _r291_candidate/App/TaskbarMonitorEnhanced.exe).Hash -cne $m.MainSHA256){
+            throw 'R291_HASH_DRIFT'
+          }
+          if(Test-Path (Join-Path $env:LOCALAPPDATA 'TaskbarMonitorEnhanced')){
+            throw 'R291_NOT_FRESH_GUEST'
+          }
+          'R291_PRECONDITIONS_PASS'
+      - name: Real native taskbar Start Settings and Glass test in guest
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $s=(Resolve-Path build/Test-R291-ExplorerStart-Settings-Glass.ps1).Path
+          $d=(Resolve-Path _r291_candidate).Path
+          & powershell.exe -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -File $s -HostLabel '${{ matrix.host }}' -CandidateDir $d
+          if($LASTEXITCODE -ne 0){throw 'R291_NATIVE_EXPLORER_FAIL'}
+          $file=Join-Path $env:RUNNER_TEMP ('TBME_R291_${{ matrix.host }}/R291_NATIVE.json')
+          if(!(Test-Path $file)){throw 'R291_NATIVE_PROOF_MISSING'}
+          $r=Get-Content $file -Raw|ConvertFrom-Json
+          if($r.Status -cne 'PASS_REAL_MENU_SETTINGS_START_FULLSCREEN_TASKBAR_VISIBILITY_FOUR_MODES' -or
+             $r.EventCommit -cne $env:GITHUB_SHA -or
+             $r.Host -cne '${{ matrix.host }}' -or
+             @($r.TestedModes).Count -ne 4 -or
+             $r.PersonalComputerTouched -ne $false){
+            throw 'R291_NATIVE_TYPED_PROOF_REJECTED'
+          }
+          'R291_NATIVE_REAL_START_SETTINGS_GLASS_PASS'
+      - name: Preserve bounded JSON receipts only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R291-REAL-EXPLORER-${{ matrix.os }}-${{ github.sha }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/TBME_R291_${{ matrix.host }}/R291_NATIVE.json
+            ${{ runner.temp }}/TBME_R291_${{ matrix.host }}/R158_READY_*.json
+            ${{ runner.temp }}/TBME_R291_${{ matrix.host }}/*_NATIVE_FAILURE.json

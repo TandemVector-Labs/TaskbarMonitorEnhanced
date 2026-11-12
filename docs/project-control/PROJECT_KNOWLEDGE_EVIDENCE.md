@@ -1,4 +1,20 @@
 # Project Knowledge / Evidence Record — Taskbar Monitor Enhanced
+<!-- TBME:PUBLIC-KNOWLEDGE:R287 -->
+## 2026-10-17 / R286–R287 — v1.7.8 owner real thermal sound API (public redacted scope)
+
+- [Release v1.7.8](https://github.com/GOD13emad/TaskbarMonitorEnhanced/releases/tag/v1.7.8) source 9960a06dba606d1c93b8ca2b84e0e3e25ca4f68d, Setup SHA 4DB3C03AC7AB70B3D3123A365C156E71370F0338991B399B99169A4B5B5F8B75, Main SHA A3E9ABD7E97655AD6787B71239505F30A7C0350B77F352DE4DE83461CD170D31, seven immutable assets. Build 38977412946 (27/27) and native Windows two-host crash recovery 38977412933 (3/3) PASS; a real same-root per-user update and protected 26-file previous-version archive were verified, with Glass zero alpha/hot red retained.
+- The new optional sound setting defaults off for fresh installations; the owner enabled it. Settings includes a manual one-shot Test warning sound. Natural CPU high temperature warnings then produced 26 paired Windows Exclamation sound API requests, zero logged failures and minimum spacing 10.001 min, using existing quiet-hours, 3C hysteresis and ten-minute cooldown. OS Exclamation sound file exists. A request log is not proof physical speaker audibility or a visible Windows balloon.
+- Reporter-specific WinRing0 original file SHA/download origin remains missing in Issue #6. Unmerged PR #80 has CodeQL path-analysis warnings still needing exact Windows/security adjudication. Separate signed local PawnIO on a different PC cannot clear the reporter. No Defender bypass. User excluded actual AC power-loss tests, and accepted one per-user unsigned Setup rather than a global machinewide singleton.
+
+<!-- TBME:PUBLIC-KNOWLEDGE:R285 -->
+## 2026-10-17 / R285 — release and owner verification public summary (redacted derivative)
+
+- Versioned crash fix: private/native Windows-hosted actual v1.7.6 Setup interruption exposed a stuck updater-owned .restore scratch; R284 v1.7.7 reconstructs only owned scratch after journal/index validation. PR #76 merged dc68cf448173bd0808d1dfa54bc9e9bf7ca20aad; exact-main Build CI 38965519302 and Windows A/B crash recovery CI 38965519445 PASS. Real physical power cut was excluded by owner.
+- Public immutable seven-asset v1.7.7 GitHub release ID 415382091, Setup SHA 395AEE56006F55FD5DCCFB52E1519088CE01A10386840D7008C6BA900136A06D, Main SHA A6D4BFD00C918C0601A12D185F414E92F2B6A85927042B811537B0BC37606253; independent artifact G16 PASS. Official v1.7.6 retained unchanged.
+- Real owner same-root one-per-user v1.7.6→v1.7.7 upgrade Exit 0; 26 original managed/protected files archived, all five shipped build outputs matched, config and Glass zero-alpha preserved, one Main/one Supervisor/two Brokers, no second HKLM install. Actual CPU 95C app notification dispatch logged; OS audio/banner not independently heard or seen.
+- Outstanding external items only: original reporter WinRing0 file SHA/source (Issue #6) and actual owner-app OS alert presentation/audio observation. Global machinewide singleton and signed-publisher attestation are explicitly outside accepted per-user unsigned scope; do not disable Defender.
+
+
 
 ## 2026-09-26 — R22 final identity/build/install/runtime acceptance
 

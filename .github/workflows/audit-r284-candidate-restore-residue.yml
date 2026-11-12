@@ -1,0 +1,135 @@
+name: R284 private v1.7.7 candidate and exact interrupted Setup recovery
+
+on:
+  push:
+    branches: [fix/v1.7.7-restore-residue-r284]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    name: Build private unsigned v1.7.7 candidate (not a public release)
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.400
+      - name: Build hash-bound private Setup candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if((git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA -or
+             $env:GITHUB_ACTIONS -cne 'true' -or
+             $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows'){throw 'R284_BAD_HOSTED_SOURCE'}
+          ./build/Build.ps1
+          if($LASTEXITCODE -ne 0){throw 'R284_VERSIONED_BUILD_FAILED'}
+          $setup='build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.7.exe'
+          $main='build/_out/App/TaskbarMonitorEnhanced.exe'
+          if(!(Test-Path $setup) -or !(Test-Path $main)){throw 'R284_PRIVATE_BINARIES_MISSING'}
+          $record=[ordered]@{
+            Schema=1;Status='PRIVATE_NOT_A_RELEASE';Commit=$env:GITHUB_SHA
+            Version='1.7.7';Private=$true;NotForPublicInstallation=$true
+            SetupSHA256=(Get-FileHash $setup).Hash
+            MainSHA256=(Get-FileHash $main).Hash
+          }
+          [IO.File]::WriteAllText('build/_out/CANDIDATE.json',($record|ConvertTo-Json -Depth 4),[Text.UTF8Encoding]::new($false))
+          'R284_CANDIDATE_COMPILED_AND_HASH_BOUND'
+      - name: Upload bounded candidate for disposable tests only
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R284-PRIVATE-NOT-PUBLIC-RELEASE
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            build/_out/CANDIDATE.json
+            build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.7.exe
+            build/_out/App/TaskbarMonitorEnhanced.exe
+
+  cold-recovery:
+    name: Recovery exact Main candidate on isolated Windows ${{ matrix.host }}
+    needs: candidate
+    timeout-minutes: 18
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: A
+            os: windows-2025
+          - host: B
+            os: windows-2022
+    steps:
+      - name: Exact candidate source checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Retrieve private candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: R284-PRIVATE-NOT-PUBLIC-RELEASE
+          path: _r284_private_candidate
+      - name: Preflight script parser and strict disposable host
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($env:GITHUB_ACTIONS -cne 'true' -or
+             $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+             $env:RUNNER_OS -cne 'Windows' -or
+             $env:COMPUTERNAME -match 'EMAD-PC'){throw 'R284_UNSAFE_NON_DISPOSABLE_HOST'}
+          if((git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA){throw 'R284_BAD_SOURCE_CHECKOUT'}
+          $p=(Resolve-Path build/Test-R284-RestoreResidue-NativeRecovery.ps1).Path
+          $tokens=$null;$errors=$null
+          [void][Management.Automation.Language.Parser]::ParseFile($p,[ref]$tokens,[ref]$errors)
+          if(@($errors).Count){$errors|ForEach-Object{$_.Message};throw 'R284_PS51_SCRIPT_PARSER_INVALID'}
+          if(!(Test-Path build/official-v176-managed.json)){throw 'R284_PINNED_176_MISSING'}
+          $c=Get-Content _r284_private_candidate/CANDIDATE.json -Raw|ConvertFrom-Json
+          if($c.Commit -cne $env:GITHUB_SHA -or $c.Version -cne '1.7.7' -or
+             $c.Private -ne $true -or $c.NotForPublicInstallation -ne $true){throw 'R284_NOT_EXACT_PRIVATE_CANDIDATE'}
+          'R284_GUEST_PRECONDITION_PASS'
+      - name: Force helper crash; prove residue recovery, and real Setup kill on B
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          ./build/Test-R284-RestoreResidue-NativeRecovery.ps1 -HostLabel '${{ matrix.host }}' -CandidateDir (Resolve-Path _r284_private_candidate).Path
+          if($LASTEXITCODE -ne 0){throw 'R284_GUEST_TEST_FAILED'}
+          $p=Join-Path $env:RUNNER_TEMP ('R284_${{ matrix.host }}_'+$env:GITHUB_RUN_ID+'/R284_RECOVERY_RECEIPT.json')
+          if(!(Test-Path $p)){throw 'R284_GUEST_RECEIPT_MISSING'}
+          $r=Get-Content $p -Raw|ConvertFrom-Json
+          if($r.Schema -ne 1 -or $r.Revision -cne 'R284' -or
+             $r.Status -cne 'PASS_EXACT_V177_SETUP_RETRY_AFTER_STRANDED_RESTORE' -or
+             $r.Host -cne '${{ matrix.host }}' -or
+             $r.SourceCommit -cne $env:GITHUB_SHA -or
+             $r.PreviousManifestRowsSHAAndSizeChecked -ne 22 -or
+             $r.StagingHelperActuallyKilled -ne $true -or
+             $r.StrandedUpdaterOwnedRestoreZeroByteProven -ne $true -or
+             $r.RecoveredAfterSecondNativeSetupRun -ne $true -or
+             $r.SingleCanonicalUserRootPreserved -ne $true -or
+             $r.ProtectedUserDataHashPreserved -ne $true -or
+             $r.JournalRemoved -ne $true -or
+             $r.OriginalOwnerComputerTouched -ne $false -or
+             $r.PhysicalMainsLossTriggered -ne $false){throw 'R284_RECEIPT_TYPED_PASS_FAILED'}
+          if('${{ matrix.host }}' -ceq 'B' -and
+             ($r.NativeSetupProcessActuallyKilled -ne $true -or
+              $r.NativeSetupManagedNoteDeletionWitnessed -ne $true)){throw 'R284_REAL_SETUP_KILL_NOT_WITNESSED'}
+          'R284_GUEST_TYPED_RECOVERY_PASS'
+      - name: Preserve bounded guest evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: R284-guest-${{ matrix.host }}-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 21
+          path: |
+            ${{ runner.temp }}/R284_${{ matrix.host }}_${{ github.run_id }}/R284_RECOVERY_RECEIPT.json
+            ${{ runner.temp }}/R284_${{ matrix.host }}_${{ github.run_id }}/ARMED.json
