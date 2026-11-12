@@ -2142,7 +2142,7 @@ internal static partial class SetupProgram
             if(bytes.Length<1 || fresh.ContainsKey(t.Rel))throw new InvalidDataException("Duplicate/empty payload "+t.Rel);
             fresh.Add(t.Rel,bytes);
         }
-        if(fresh.Count!=UpgradeTargets.Length-10)
+        if(fresh.Count!=UpgradeTargets.Length-12)
             throw new InvalidDataException("Upgrade static target map is invalid.");
         return fresh;
     }
