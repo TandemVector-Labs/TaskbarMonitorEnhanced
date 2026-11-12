@@ -69,42 +69,42 @@ jobs:
       - name: R322 embedded backend ZIP archive/hostile entries (native .NET Framework)
         shell: pwsh
         run: |
-          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-BackendZip-R322.ps1
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-BackendZip-R322.ps1 -SetupPath ./build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.10.exe
           if ($LASTEXITCODE -ne 0) { throw 'R322 backend ZIP / PE-resource hostile-archive regression failed.' }
       - name: R323 owned-shortcut-only deletion preserves unrelated .lnk files (native)
         shell: pwsh
         run: |
-          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-ShortcutOwnership-R323.ps1
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-ShortcutOwnership-R323.ps1 -SetupPath ./build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.10.exe
           if ($LASTEXITCODE -ne 0) { throw 'R323 foreign-shortcut deletion guard regressed.' }
       - name: R324 reject foreign existing shortcuts before fresh install writes
         shell: pwsh
         run: |
-          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-ShortcutCreation-R324.ps1
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-ShortcutCreation-R324.ps1 -SetupPath ./build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.10.exe
           if ($LASTEXITCODE -ne 0) { throw 'R324 shortcut ownership-before-Save regression failed.' }
       - name: R324 SHA-pinned ZIP integrity preflight before backend mutation (native)
         shell: pwsh
         run: |
-          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-BackendArchiveHash-R324.ps1
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-BackendArchiveHash-R324.ps1 -SetupPath ./build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.10.exe
           if ($LASTEXITCODE -ne 0) { throw 'R324 archive SHA integrity and old backend preservation regression failed.' }
       - name: R326 exact Main CreateProcess without ShellExecute and arguments (native)
         shell: pwsh
         run: |
-          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R326-DirectMainProcess-Native.ps1
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R326-DirectMainProcess-Native.ps1 -SetupPath ./build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.10.exe
           if ($LASTEXITCODE -ne 0) { throw 'R326 pinned Main direct CreateProcess native security tests failed.' }
       - name: R327 canonical profile Temp instead of mutable TEMP/TMP (native)
         shell: pwsh
         run: |
-          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R327-CanonicalSensorTemp-Native.ps1
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R327-CanonicalSensorTemp-Native.ps1 -SetupPath ./build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.10.exe
           if ($LASTEXITCODE -ne 0) { throw 'R327 canonical sensor Temp, reparse and environment-negative tests failed.' }
       - name: R328 protected Helper post-preflight log/result boundary (native)
         shell: pwsh
         run: |
-          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R328-HelperLogBoundary-Native.ps1
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R328-HelperLogBoundary-Native.ps1 -SetupPath ./build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.10.exe
           if ($LASTEXITCODE -ne 0) { throw 'R328 Sensor Helper user log/result reparse boundary checks failed.' }
       - name: R329 pinned Main blocks user-profile ancestor rename (native)
         shell: pwsh
         run: |
-          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R329-PinnedMainAncestorRename-Native.ps1
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R329-PinnedMainAncestorRename-Native.ps1 -SetupPath ./build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.10.exe
           if ($LASTEXITCODE -ne 0) { throw 'R329 same-process and cross-process pinned Main ancestor rename regression failed.' }
       - name: R330 native synchronous directory signal fallback only kills exact owned worker (6 tests)
         shell: pwsh
@@ -114,25 +114,25 @@ jobs:
       - name: R331 no runner-controlled diagnostic writes in shipped Setup PE (native)
         shell: pwsh
         run: |
-          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R331-NoHostedDiagnosticWrite-Native.ps1
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R331-NoHostedDiagnosticWrite-Native.ps1 -SetupPath ./build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.10.exe
           if ($LASTEXITCODE -ne 0) { throw 'R331 fail-closed Setup minus hosted diagnostic sink native regression failed.' }
 
       - name: R332 canonical protected sensor reuse, junction and health-state bounds (native)
         shell: pwsh
         run: |
-          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R332-SensorReuseBoundary-Native.ps1
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R332-SensorReuseBoundary-Native.ps1 -SetupPath ./build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.10.exe
           if ($LASTEXITCODE -ne 0) { throw 'R332 protected sensor reuse boundary native negative checks failed.' }
 
       - name: R333 exact shortcut name occupancy, dangling reparse and foreign owner (native)
         shell: pwsh
         run: |
-          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R333-ShortcutNameOccupied-Native.ps1
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R333-ShortcutNameOccupied-Native.ps1 -SetupPath ./build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.10.exe
           if ($LASTEXITCODE -ne 0) { throw 'R333 compiled Setup shortcut occupancy negative test failed.' }
 
       - name: R334 three remaining Setup command sink trust contracts (compiled native)
         shell: pwsh
         run: |
-          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R334-CommandSinkContracts-Native.ps1
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File ./build/Test-R334-CommandSinkContracts-Native.ps1 -SetupPath ./build/_out/Setup/TaskbarMonitorEnhanced_Setup_1.7.10.exe
           if ($LASTEXITCODE -ne 0) { throw 'R334 no-UAC three-process-command-sink adversarial contract regression failed.' }
 
       - name: R335 privileged user log/result sink pinned handle boundary (native)
